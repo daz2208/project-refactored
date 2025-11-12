@@ -76,6 +76,29 @@ class VectorStore:
         self._rebuild_vectors()
         return doc_id
 
+    def add_documents_batch(self, texts: List[str]) -> List[int]:
+        """Add multiple documents in batch and rebuild vectors once.
+
+        This is much more efficient than calling add_document() multiple
+        times, as it rebuilds the TF-IDF matrix only once at the end.
+
+        Args:
+            texts: List of document texts.
+
+        Returns:
+            List of assigned document IDs.
+        """
+        doc_ids = []
+        for text in texts:
+            doc_id = len(self.docs)
+            self.docs[doc_id] = text
+            self.doc_ids.append(doc_id)
+            doc_ids.append(doc_id)
+
+        # Single rebuild for all documents
+        self._rebuild_vectors()
+        return doc_ids
+
     def remove_document(self, doc_id: int) -> None:
         """Remove a document from the store and rebuild vectors.
 

@@ -581,50 +581,61 @@ async def search_full_content(
     q: str,
     top_k: int = 10,
     cluster_id: Optional[int] = None,
+    full_content: bool = False,
     current_user: User = Depends(get_current_user)
 ):
-    """Search and return FULL content (not snippets)."""
+    """
+    Search documents with optional full content.
+
+    By default returns 500-char snippets for performance.
+    Set full_content=true to get complete document text.
+    """
     if top_k < 1 or top_k > 50:
         top_k = 10
-    
+
     # Get user's documents
     user_doc_ids = [
         doc_id for doc_id, meta in metadata.items()
         if meta.owner == current_user.username
     ]
-    
+
     if not user_doc_ids:
         return {"results": [], "grouped_by_cluster": {}}
-    
+
     # Filter by cluster if specified
     if cluster_id is not None:
         user_doc_ids = [
             doc_id for doc_id in user_doc_ids
             if metadata[doc_id].cluster_id == cluster_id
         ]
-    
-    # Search with full content
+
+    # Search
     search_results = vector_store.search(
         query=q,
         top_k=top_k,
         allowed_doc_ids=user_doc_ids
     )
-    
+
     # Build response with metadata
     results = []
     cluster_groups = {}
-    
+
     for doc_id, score, snippet in search_results:
         meta = metadata[doc_id]
         cluster = clusters.get(meta.cluster_id) if meta.cluster_id else None
-        
-        # Return full content
-        full_content = documents[doc_id]
+
+        # Return full content or snippet based on parameter
+        if full_content:
+            content = documents[doc_id]
+        else:
+            # Return 500 char snippet for performance
+            doc_text = documents[doc_id]
+            content = doc_text[:500] + ("..." if len(doc_text) > 500 else "")
         
         results.append({
             "doc_id": doc_id,
             "score": score,
-            "content": full_content,  # FULL CONTENT
+            "content": content,  # Snippet or full content based on parameter
             "metadata": meta.dict(),
             "cluster": cluster.dict() if cluster else None
         })

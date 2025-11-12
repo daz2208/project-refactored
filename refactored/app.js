@@ -485,6 +485,26 @@ function escapeHtml(text) {
 }
 
 // =============================================================================
+// DEBOUNCING
+// =============================================================================
+
+let searchDebounceTimeout;
+
+function debounceSearch() {
+    /**
+     * Debounce search input to avoid excessive API calls.
+     * Waits 300ms after user stops typing before triggering search.
+     */
+    clearTimeout(searchDebounceTimeout);
+    searchDebounceTimeout = setTimeout(() => {
+        const query = document.getElementById('searchQuery').value;
+        if (query.trim()) {
+            searchKnowledge();
+        }
+    }, 300);
+}
+
+// =============================================================================
 // INIT
 // =============================================================================
 
@@ -496,3 +516,11 @@ if (savedToken) {
     document.getElementById('mainContent').classList.remove('hidden');
     loadClusters();
 }
+
+// Set up search input debouncing
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('searchQuery');
+    if (searchInput) {
+        searchInput.addEventListener('input', debounceSearch);
+    }
+});
