@@ -106,6 +106,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 origins = ALLOWED_ORIGINS.split(',') if ALLOWED_ORIGINS != '*' else ['*']
+
+# Warn if using wildcard CORS in production
+if origins == ['*']:
+    logger.warning(
+        "⚠️  SECURITY WARNING: CORS is set to allow ALL origins (*). "
+        "This is insecure for production. Set SYNCBOARD_ALLOWED_ORIGINS to specific domains."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

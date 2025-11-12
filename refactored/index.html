@@ -214,8 +214,8 @@
             <h2>Login / Register</h2>
             <input type="text" id="username" placeholder="Username">
             <input type="password" id="password" placeholder="Password">
-            <button onclick="login()">Login</button>
-            <button class="secondary" onclick="register()">Register</button>
+            <button onclick="login(event)">Login</button>
+            <button class="secondary" onclick="register(event)">Register</button>
         </div>
         
         <!-- Main Content (hidden until logged in) -->
@@ -253,7 +253,7 @@
                 <div class="content-area">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                         <h2>🔍 Search & Explore</h2>
-                        <button onclick="whatCanIBuild()">What Can I Build?</button>
+                        <button onclick="whatCanIBuild(event)">What Can I Build?</button>
                     </div>
                     
                     <input type="text" id="searchQuery" placeholder="Search your knowledge...">

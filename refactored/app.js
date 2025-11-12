@@ -2,20 +2,58 @@ const API_BASE = 'http://localhost:8000';
 let token = null;
 
 // =============================================================================
+// HELPERS
+// =============================================================================
+
+async function getErrorMessage(response) {
+    /**
+     * Extract error message from API response.
+     * Tries to parse JSON error detail, falls back to status text.
+     */
+    try {
+        const data = await response.json();
+        return data.detail || response.statusText || 'Operation failed';
+    } catch {
+        return response.statusText || 'Operation failed';
+    }
+}
+
+function setButtonLoading(button, isLoading, originalText = null) {
+    /**
+     * Set loading state on a button.
+     * Disables button and changes text when loading.
+     */
+    if (isLoading) {
+        button.disabled = true;
+        button.dataset.originalText = button.textContent;
+        button.textContent = 'Loading...';
+        button.style.opacity = '0.6';
+    } else {
+        button.disabled = false;
+        button.textContent = originalText || button.dataset.originalText || button.textContent;
+        button.style.opacity = '1';
+        delete button.dataset.originalText;
+    }
+}
+
+// =============================================================================
 // AUTH
 // =============================================================================
 
-async function login() {
+async function login(event) {
+    const button = event ? event.target : null;
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
-    
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const res = await fetch(`${API_BASE}/token`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({username, password})
         });
-        
+
         if (res.ok) {
             const data = await res.json();
             token = data.access_token;
@@ -25,31 +63,40 @@ async function login() {
             showToast('Logged in successfully');
             loadClusters();
         } else {
-            showToast('Login failed', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Login error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Login');
     }
 }
 
-async function register() {
+async function register(event) {
+    const button = event ? event.target : null;
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
-    
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const res = await fetch(`${API_BASE}/users`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({username, password})
         });
-        
+
         if (res.ok) {
             showToast('Registered! Now login.');
         } else {
-            showToast('Registration failed', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Registration error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Register');
     }
 }
 
@@ -59,42 +106,43 @@ async function register() {
 
 function showUploadType(type) {
     const forms = document.getElementById('uploadForms');
-    
+
     if (type === 'text') {
         forms.innerHTML = `
             <textarea id="textContent" rows="8" placeholder="Paste your content..."></textarea>
-            <button onclick="uploadText()">Upload Text</button>
+            <button onclick="uploadText(event)">Upload Text</button>
         `;
     } else if (type === 'url') {
         forms.innerHTML = `
             <input type="text" id="urlInput" placeholder="https://youtube.com/... or https://example.com/article">
-            <button onclick="uploadUrl()">Upload URL</button>
+            <button onclick="uploadUrl(event)">Upload URL</button>
             <p style="color: #888; font-size: 0.9rem; margin-top: 5px;">YouTube videos may take 30-120 seconds</p>
         `;
     } else if (type === 'file') {
         forms.innerHTML = `
             <input type="file" id="fileInput" accept=".pdf,.txt,.docx,.mp3,.wav">
-            <button onclick="uploadFile()">Upload File</button>
+            <button onclick="uploadFile(event)">Upload File</button>
         `;
     } else if (type === 'image') {
         forms.innerHTML = `
             <input type="file" id="imageInput" accept="image/*">
             <input type="text" id="imageDesc" placeholder="Optional description (what is this image for?)">
-            <button onclick="uploadImage()">Upload Image</button>
+            <button onclick="uploadImage(event)">Upload Image</button>
         `;
     }
 }
 
-async function uploadText() {
+async function uploadText(event) {
+    const button = event ? event.target : null;
     const content = document.getElementById('textContent').value;
-    
+
     if (!content.trim()) {
         showToast('Content cannot be empty', 'error');
         return;
     }
-    
-    showToast('Uploading...', 'info');
-    
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const res = await fetch(`${API_BASE}/upload_text`, {
             method: 'POST',
@@ -104,30 +152,34 @@ async function uploadText() {
             },
             body: JSON.stringify({content})
         });
-        
+
         if (res.ok) {
             const data = await res.json();
             showToast(`Uploaded! Doc ${data.document_id} → Cluster ${data.cluster_id}`);
             document.getElementById('textContent').value = '';
             loadClusters();
         } else {
-            showToast('Upload failed', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Upload error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Upload Text');
     }
 }
 
-async function uploadUrl() {
+async function uploadUrl(event) {
+    const button = event ? event.target : null;
     const url = document.getElementById('urlInput').value;
-    
+
     if (!url.trim()) {
         showToast('URL cannot be empty', 'error');
         return;
     }
-    
-    showToast('Uploading URL... (may take 30-120s for videos)', 'info');
-    
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const res = await fetch(`${API_BASE}/upload`, {
             method: 'POST',
@@ -137,33 +189,37 @@ async function uploadUrl() {
             },
             body: JSON.stringify({url})
         });
-        
+
         if (res.ok) {
             const data = await res.json();
             showToast(`Uploaded! Doc ${data.document_id} → Cluster ${data.cluster_id}`);
             document.getElementById('urlInput').value = '';
             loadClusters();
         } else {
-            showToast('Upload failed', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Upload error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Upload URL');
     }
 }
 
-async function uploadFile() {
+async function uploadFile(event) {
+    const button = event ? event.target : null;
     const file = document.getElementById('fileInput').files[0];
-    
+
     if (!file) {
         showToast('Please select a file', 'error');
         return;
     }
-    
-    showToast('Processing file...', 'info');
-    
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const base64 = await fileToBase64(file);
-        
+
         const res = await fetch(`${API_BASE}/upload_file`, {
             method: 'POST',
             headers: {
@@ -175,34 +231,38 @@ async function uploadFile() {
                 content: base64
             })
         });
-        
+
         if (res.ok) {
             const data = await res.json();
             showToast(`Uploaded! Doc ${data.document_id} → Cluster ${data.cluster_id}`);
             document.getElementById('fileInput').value = '';
             loadClusters();
         } else {
-            showToast('Upload failed', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Upload error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Upload File');
     }
 }
 
-async function uploadImage() {
+async function uploadImage(event) {
+    const button = event ? event.target : null;
     const file = document.getElementById('imageInput').files[0];
     const description = document.getElementById('imageDesc').value;
-    
+
     if (!file) {
         showToast('Please select an image', 'error');
         return;
     }
-    
-    showToast('Processing image with OCR...', 'info');
-    
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const base64 = await fileToBase64(file);
-        
+
         const res = await fetch(`${API_BASE}/upload_image`, {
             method: 'POST',
             headers: {
@@ -215,7 +275,7 @@ async function uploadImage() {
                 description: description || null
             })
         });
-        
+
         if (res.ok) {
             const data = await res.json();
             showToast(`Uploaded! OCR extracted ${data.ocr_text_length} chars`);
@@ -223,10 +283,13 @@ async function uploadImage() {
             document.getElementById('imageDesc').value = '';
             loadClusters();
         } else {
-            showToast('Upload failed', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Upload error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Upload Image');
     }
 }
 
@@ -361,9 +424,11 @@ function displaySearchResults(results) {
 // BUILD SUGGESTIONS
 // =============================================================================
 
-async function whatCanIBuild() {
-    showToast('Analyzing your knowledge...', 'info');
-    
+async function whatCanIBuild(event) {
+    const button = event ? event.target : null;
+
+    if (button) setButtonLoading(button, true);
+
     try {
         const res = await fetch(`${API_BASE}/what_can_i_build`, {
             method: 'POST',
@@ -373,15 +438,18 @@ async function whatCanIBuild() {
             },
             body: JSON.stringify({max_suggestions: 5})
         });
-        
+
         if (res.ok) {
             const data = await res.json();
             displayBuildSuggestions(data.suggestions, data.knowledge_summary);
         } else {
-            showToast('Failed to generate suggestions', 'error');
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
         }
     } catch (e) {
         showToast('Error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'What Can I Build?');
     }
 }
 
