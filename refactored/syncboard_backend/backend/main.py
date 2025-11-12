@@ -1,0 +1,705 @@
+"""
+FastAPI backend for SyncBoard 3.0 Knowledge Bank.
+
+Knowledge-first architecture with auto-clustering and build suggestions.
+Boards removed - all content organized by AI-discovered concepts.
+"""
+
+import os
+import asyncio
+import base64
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Load environment variables
+env_paths = [
+    Path(__file__).parent.parent / '.env',
+    Path(__file__).parent / '.env',
+]
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
+
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordBearer
+import logging
+
+from .models import (
+    DocumentUpload,
+    TextUpload,
+    FileBytesUpload,
+    ImageUpload,
+    SearchResult,
+    UserCreate,
+    User,
+    Token,
+    UserLogin,
+    GenerationRequest,
+    DocumentMetadata,
+    Cluster,
+    Concept,
+)
+from .vector_store import VectorStore
+from .storage import load_storage, save_storage
+from . import ingest
+from .concept_extractor import ConceptExtractor
+from .clustering import ClusteringEngine
+from .image_processor import ImageProcessor
+from .build_suggester import BuildSuggester
+
+# Try to import AI generation
+try:
+    from .ai_generation_real import generate_with_rag, MODELS
+    REAL_AI_AVAILABLE = True
+    print("[SUCCESS] Real AI integration loaded")
+except ImportError as e:
+    REAL_AI_AVAILABLE = False
+    print(f"[WARNING] Real AI not available: {e}")
+
+import json
+import hmac
+import hashlib
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+STORAGE_PATH = os.environ.get('SYNCBOARD_STORAGE_PATH', 'storage.json')
+VECTOR_DIM = int(os.environ.get('SYNCBOARD_VECTOR_DIM', '256'))
+SECRET_KEY = os.environ.get('SYNCBOARD_SECRET_KEY', 'your-secret-key-change-in-production')
+TOKEN_EXPIRE_MINUTES = int(os.environ.get('SYNCBOARD_TOKEN_EXPIRE_MINUTES', '1440'))
+ALLOWED_ORIGINS = os.environ.get('SYNCBOARD_ALLOWED_ORIGINS', '*')
+
+# =============================================================================
+# FastAPI Application
+# =============================================================================
+
+app = FastAPI(
+    title="SyncBoard Knowledge Bank",
+    description="AI-powered knowledge management with auto-clustering",
+    version="3.0.0"
+)
+
+# CORS
+origins = ALLOWED_ORIGINS.split(',') if ALLOWED_ORIGINS != '*' else ['*']
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# OAuth2
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# =============================================================================
+# Global State
+# =============================================================================
+
+vector_store = VectorStore(dim=VECTOR_DIM)
+documents: Dict[int, str] = {}
+metadata: Dict[int, DocumentMetadata] = {}
+clusters: Dict[int, Cluster] = {}
+users: Dict[str, str] = {}
+storage_lock = asyncio.Lock()
+
+# Initialize processors
+concept_extractor = ConceptExtractor()
+clustering_engine = ClusteringEngine()
+image_processor = ImageProcessor()
+build_suggester = BuildSuggester()
+
+# =============================================================================
+# Startup
+# =============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    global documents, metadata, clusters, users
+    documents, metadata, clusters, users = load_storage(STORAGE_PATH, vector_store)
+    logger.info(f"Loaded {len(documents)} documents, {len(clusters)} clusters, {len(users)} users")
+    
+    # Create default test user if none exist
+    if not users:
+        users['test'] = hash_password('test123')
+        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        logger.info("Created default test user")
+
+# Mount static files
+try:
+    static_path = Path(__file__).parent / 'static'
+    if static_path.exists():
+        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
+except Exception as e:
+    logger.warning(f"Could not mount static files: {e}")
+
+# =============================================================================
+# Authentication Helpers
+# =============================================================================
+
+def hash_password(password: str) -> str:
+    """Hash password using PBKDF2."""
+    salt = SECRET_KEY.encode('utf-8')
+    return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000).hex()
+
+
+def create_access_token(data: dict) -> str:
+    """Create JWT token."""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": int(expire.timestamp())})
+    
+    payload = json.dumps(to_encode).encode('utf-8')
+    signature = hmac.new(SECRET_KEY.encode('utf-8'), payload, hashlib.sha256).hexdigest()
+    
+    token = f"{payload.hex()}.{signature}"
+    return token
+
+
+def decode_access_token(token: str) -> dict:
+    """Decode and verify JWT token."""
+    try:
+        payload_hex, signature = token.split('.')
+        payload = bytes.fromhex(payload_hex)
+        
+        expected_sig = hmac.new(SECRET_KEY.encode('utf-8'), payload, hashlib.sha256).hexdigest()
+        if signature != expected_sig:
+            raise ValueError('Invalid signature')
+        
+        data = json.loads(payload.decode('utf-8'))
+        exp = data.get('exp')
+        if exp and exp < int(datetime.utcnow().timestamp()):
+            raise ValueError('Token expired')
+        
+        return data
+    except Exception:
+        raise ValueError('Invalid token')
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    """Get current user from token."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = decode_access_token(token)
+        username = payload.get("sub")
+        if not username or username not in users:
+            raise credentials_exception
+    except Exception:
+        raise credentials_exception
+    
+    return User(username=username)
+
+# =============================================================================
+# Authentication Endpoints
+# =============================================================================
+
+@app.post("/users", response_model=User)
+async def create_user(user_create: UserCreate) -> User:
+    """Register new user."""
+    if user_create.username in users:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    users[user_create.username] = hash_password(user_create.password)
+    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+    logger.info(f"Created user: {user_create.username}")
+    
+    return User(username=user_create.username)
+
+
+@app.post("/token", response_model=Token)
+async def login(user_login: UserLogin) -> Token:
+    """Login and get token."""
+    stored_hash = users.get(user_login.username)
+    if not stored_hash or stored_hash != hash_password(user_login.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+    
+    access_token = create_access_token(data={"sub": user_login.username})
+    return Token(access_token=access_token)
+
+# =============================================================================
+# Clustering Helper
+# =============================================================================
+
+async def find_or_create_cluster(
+    doc_id: int,
+    suggested_cluster: str,
+    concepts: List[Dict]
+) -> int:
+    """Find best cluster or create new one."""
+    meta = metadata[doc_id]
+    
+    # Try to find existing cluster
+    cluster_id = clustering_engine.find_best_cluster(
+        doc_concepts=concepts,
+        suggested_name=suggested_cluster,
+        existing_clusters=clusters
+    )
+    
+    if cluster_id is not None:
+        clustering_engine.add_to_cluster(cluster_id, doc_id, clusters)
+        return cluster_id
+    
+    # Create new cluster
+    cluster_id = clustering_engine.create_cluster(
+        doc_id=doc_id,
+        name=suggested_cluster,
+        concepts=concepts,
+        skill_level=meta.skill_level,
+        existing_clusters=clusters
+    )
+    
+    return cluster_id
+
+# =============================================================================
+# Upload Endpoints (NO BOARD_ID)
+# =============================================================================
+
+@app.post("/upload_text")
+async def upload_text_content(
+    req: TextUpload,
+    current_user: User = Depends(get_current_user)
+):
+    """Upload plain text content."""
+    if not req.content or not req.content.strip():
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+    
+    async with storage_lock:
+        # Extract concepts
+        extraction = await concept_extractor.extract(req.content, "text")
+        
+        # Add to vector store
+        doc_id = vector_store.add_document(req.content)
+        documents[doc_id] = req.content
+        
+        # Create metadata
+        meta = DocumentMetadata(
+            doc_id=doc_id,
+            owner=current_user.username,
+            source_type="text",
+            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
+            skill_level=extraction.get("skill_level", "unknown"),
+            cluster_id=None,
+            ingested_at=datetime.utcnow().isoformat(),
+            content_length=len(req.content)
+        )
+        metadata[doc_id] = meta
+        
+        # Find or create cluster
+        cluster_id = await find_or_create_cluster(
+            doc_id=doc_id,
+            suggested_cluster=extraction.get("suggested_cluster", "General"),
+            concepts=extraction.get("concepts", [])
+        )
+        metadata[doc_id].cluster_id = cluster_id
+        
+        # Save
+        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        
+        logger.info(
+            f"User {current_user.username} uploaded text as doc {doc_id} "
+            f"(cluster: {cluster_id}, concepts: {len(extraction.get('concepts', []))})"
+        )
+        
+        return {
+            "document_id": doc_id,
+            "cluster_id": cluster_id,
+            "concepts": extraction.get("concepts", [])
+        }
+
+
+@app.post("/upload")
+async def upload_url(
+    doc: DocumentUpload,
+    current_user: User = Depends(get_current_user)
+):
+    """Upload document via URL (YouTube, web article, etc)."""
+    try:
+        document_text = ingest.download_url(str(doc.url))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to ingest URL: {exc}")
+    
+    async with storage_lock:
+        # Extract concepts
+        extraction = await concept_extractor.extract(document_text, "url")
+        
+        # Add to vector store
+        doc_id = vector_store.add_document(document_text)
+        documents[doc_id] = document_text
+        
+        # Create metadata
+        meta = DocumentMetadata(
+            doc_id=doc_id,
+            owner=current_user.username,
+            source_type="url",
+            source_url=str(doc.url),
+            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
+            skill_level=extraction.get("skill_level", "unknown"),
+            cluster_id=None,
+            ingested_at=datetime.utcnow().isoformat(),
+            content_length=len(document_text)
+        )
+        metadata[doc_id] = meta
+        
+        # Cluster
+        cluster_id = await find_or_create_cluster(
+            doc_id=doc_id,
+            suggested_cluster=extraction.get("suggested_cluster", "General"),
+            concepts=extraction.get("concepts", [])
+        )
+        metadata[doc_id].cluster_id = cluster_id
+        
+        # Save
+        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        
+        logger.info(f"User {current_user.username} uploaded URL as doc {doc_id}")
+        
+        return {
+            "document_id": doc_id,
+            "cluster_id": cluster_id,
+            "concepts": extraction.get("concepts", [])
+        }
+
+
+@app.post("/upload_file")
+async def upload_file(
+    req: FileBytesUpload,
+    current_user: User = Depends(get_current_user)
+):
+    """Upload file (PDF, audio, etc) as base64."""
+    try:
+        file_bytes = base64.b64decode(req.content)
+        document_text = ingest.process_file_bytes(file_bytes, req.filename)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {exc}")
+    
+    async with storage_lock:
+        # Extract concepts
+        extraction = await concept_extractor.extract(document_text, "file")
+        
+        # Add to vector store
+        doc_id = vector_store.add_document(document_text)
+        documents[doc_id] = document_text
+        
+        # Create metadata
+        meta = DocumentMetadata(
+            doc_id=doc_id,
+            owner=current_user.username,
+            source_type="file",
+            filename=req.filename,
+            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
+            skill_level=extraction.get("skill_level", "unknown"),
+            cluster_id=None,
+            ingested_at=datetime.utcnow().isoformat(),
+            content_length=len(document_text)
+        )
+        metadata[doc_id] = meta
+        
+        # Cluster
+        cluster_id = await find_or_create_cluster(
+            doc_id=doc_id,
+            suggested_cluster=extraction.get("suggested_cluster", "General"),
+            concepts=extraction.get("concepts", [])
+        )
+        metadata[doc_id].cluster_id = cluster_id
+        
+        # Save
+        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        
+        logger.info(f"User {current_user.username} uploaded file {req.filename} as doc {doc_id}")
+        
+        return {
+            "document_id": doc_id,
+            "cluster_id": cluster_id,
+            "concepts": extraction.get("concepts", [])
+        }
+
+
+@app.post("/upload_image")
+async def upload_image(
+    req: ImageUpload,
+    current_user: User = Depends(get_current_user)
+):
+    """Upload and process image with OCR."""
+    try:
+        image_bytes = base64.b64decode(req.content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64: {e}")
+    
+    async with storage_lock:
+        # Extract text via OCR
+        extracted_text = image_processor.extract_text_from_image(image_bytes)
+        
+        # Get image metadata
+        img_meta = image_processor.get_image_metadata(image_bytes)
+        
+        # Combine description + OCR text
+        full_content = ""
+        if req.description:
+            full_content += f"Description: {req.description}\n\n"
+        if extracted_text:
+            full_content += f"Extracted text: {extracted_text}\n\n"
+        full_content += f"Image metadata: {img_meta}"
+        
+        # Add to vector store
+        doc_id = vector_store.add_document(full_content)
+        documents[doc_id] = full_content
+        
+        # Save physical image
+        image_path = image_processor.store_image(image_bytes, doc_id)
+        
+        # Extract concepts
+        extraction = await concept_extractor.extract(full_content, "image")
+        
+        # Create metadata
+        meta = DocumentMetadata(
+            doc_id=doc_id,
+            owner=current_user.username,
+            source_type="image",
+            filename=req.filename,
+            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
+            skill_level=extraction.get("skill_level", "unknown"),
+            cluster_id=None,
+            ingested_at=datetime.utcnow().isoformat(),
+            content_length=len(full_content),
+            image_path=image_path
+        )
+        metadata[doc_id] = meta
+        
+        # Cluster
+        cluster_id = await find_or_create_cluster(
+            doc_id=doc_id,
+            suggested_cluster=extraction.get("suggested_cluster", "Images"),
+            concepts=extraction.get("concepts", [])
+        )
+        metadata[doc_id].cluster_id = cluster_id
+        
+        # Save
+        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        
+        logger.info(
+            f"User {current_user.username} uploaded image {req.filename} as doc {doc_id} "
+            f"(OCR: {len(extracted_text)} chars)"
+        )
+        
+        return {
+            "document_id": doc_id,
+            "cluster_id": cluster_id,
+            "ocr_text_length": len(extracted_text),
+            "image_path": image_path,
+            "concepts": extraction.get("concepts", [])
+        }
+
+# =============================================================================
+# Cluster Endpoints
+# =============================================================================
+
+@app.get("/clusters")
+async def get_clusters(
+    current_user: User = Depends(get_current_user)
+):
+    """Get user's clusters."""
+    user_clusters = []
+    
+    for cluster_id, cluster in clusters.items():
+        # Check if any docs in cluster belong to user
+        has_user_docs = any(
+            metadata.get(doc_id) and metadata[doc_id].owner == current_user.username
+            for doc_id in cluster.doc_ids
+        )
+        
+        if has_user_docs:
+            user_clusters.append(cluster.dict())
+    
+    return {
+        "clusters": user_clusters,
+        "total": len(user_clusters)
+    }
+
+# =============================================================================
+# Search Endpoints
+# =============================================================================
+
+@app.get("/search_full")
+async def search_full_content(
+    q: str,
+    top_k: int = 10,
+    cluster_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Search and return FULL content (not snippets)."""
+    if top_k < 1 or top_k > 50:
+        top_k = 10
+    
+    # Get user's documents
+    user_doc_ids = [
+        doc_id for doc_id, meta in metadata.items()
+        if meta.owner == current_user.username
+    ]
+    
+    if not user_doc_ids:
+        return {"results": [], "grouped_by_cluster": {}}
+    
+    # Filter by cluster if specified
+    if cluster_id is not None:
+        user_doc_ids = [
+            doc_id for doc_id in user_doc_ids
+            if metadata[doc_id].cluster_id == cluster_id
+        ]
+    
+    # Search with full content
+    search_results = vector_store.search(
+        query=q,
+        top_k=top_k,
+        allowed_doc_ids=user_doc_ids
+    )
+    
+    # Build response with metadata
+    results = []
+    cluster_groups = {}
+    
+    for doc_id, score, snippet in search_results:
+        meta = metadata[doc_id]
+        cluster = clusters.get(meta.cluster_id) if meta.cluster_id else None
+        
+        # Return full content
+        full_content = documents[doc_id]
+        
+        results.append({
+            "doc_id": doc_id,
+            "score": score,
+            "content": full_content,  # FULL CONTENT
+            "metadata": meta.dict(),
+            "cluster": cluster.dict() if cluster else None
+        })
+        
+        # Group by cluster
+        if meta.cluster_id:
+            if meta.cluster_id not in cluster_groups:
+                cluster_groups[meta.cluster_id] = []
+            cluster_groups[meta.cluster_id].append(doc_id)
+    
+    return {
+        "results": results,
+        "grouped_by_cluster": cluster_groups
+    }
+
+# =============================================================================
+# Build Suggestion Endpoint
+# =============================================================================
+
+@app.post("/what_can_i_build")
+async def what_can_i_build(
+    max_suggestions: int = 5,
+    current_user: User = Depends(get_current_user)
+):
+    """Analyze knowledge bank and suggest viable projects."""
+    if max_suggestions < 1 or max_suggestions > 10:
+        max_suggestions = 5
+    
+    # Filter to user's content
+    user_clusters = {
+        cid: cluster for cid, cluster in clusters.items()
+        if any(metadata[did].owner == current_user.username for did in cluster.doc_ids)
+    }
+    
+    user_metadata = {
+        did: meta for did, meta in metadata.items()
+        if meta.owner == current_user.username
+    }
+    
+    user_documents = {
+        did: doc for did, doc in documents.items()
+        if did in user_metadata
+    }
+    
+    if not user_clusters:
+        return {
+            "suggestions": [],
+            "knowledge_summary": {
+                "total_docs": 0,
+                "total_clusters": 0,
+                "clusters": []
+            }
+        }
+    
+    # Generate suggestions
+    suggestions = await build_suggester.analyze_knowledge_bank(
+        clusters=user_clusters,
+        metadata=user_metadata,
+        documents=user_documents,
+        max_suggestions=max_suggestions
+    )
+    
+    return {
+        "suggestions": [s.dict() for s in suggestions],
+        "knowledge_summary": {
+            "total_docs": len(user_documents),
+            "total_clusters": len(user_clusters),
+            "clusters": [c.dict() for c in user_clusters.values()]
+        }
+    }
+
+# =============================================================================
+# AI Generation Endpoint (existing)
+# =============================================================================
+
+@app.post("/generate")
+async def generate_content(
+    req: GenerationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate AI content with RAG."""
+    if not REAL_AI_AVAILABLE:
+        return {"response": "AI generation not available - API keys not configured"}
+    
+    # Get user's documents for RAG
+    user_doc_ids = [
+        doc_id for doc_id, meta in metadata.items()
+        if meta.owner == current_user.username
+    ]
+    
+    try:
+        response_text = await generate_with_rag(
+            prompt=req.prompt,
+            model=req.model,
+            vector_store=vector_store,
+            allowed_doc_ids=user_doc_ids,
+            documents=documents
+        )
+        return {"response": response_text}
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        return {"response": f"Error: {str(e)}"}
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "documents": len(documents),
+        "clusters": len(clusters),
+        "users": len(users)
+    }

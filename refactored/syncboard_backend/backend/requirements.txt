@@ -1,0 +1,21 @@
+fastapi
+uvicorn
+pydantic
+numpy
+scikit-learn
+requests
+python-multipart
+python-dotenv
+
+# AI API clients
+openai
+
+# Content ingestion dependencies
+yt-dlp
+pypdf
+beautifulsoup4
+python-docx
+
+# Image processing
+Pillow
+pytesseract
