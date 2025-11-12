@@ -8,6 +8,7 @@ import json
 import logging
 from typing import List, Dict
 from openai import OpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .models import Cluster, DocumentMetadata, BuildSuggestion
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,22 @@ class BuildSuggester:
             raise Exception("OPENAI_API_KEY not set")
         self.client = OpenAI(api_key=OPENAI_API_KEY)
         self.model = "gpt-5-mini"
-    
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    def _call_openai_with_retry(self, messages, temperature, max_tokens):
+        """Call OpenAI API with retry logic for transient failures."""
+        return self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
     async def analyze_knowledge_bank(
         self,
         clusters: Dict[int, Cluster],
@@ -83,8 +99,7 @@ Return ONLY valid JSON array (no markdown):
 Be specific. Reference actual content from their knowledge. Prioritize projects they can START TODAY."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = self._call_openai_with_retry(
                 messages=[
                     {
                         "role": "system",

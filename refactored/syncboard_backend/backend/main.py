@@ -24,11 +24,14 @@ for env_path in env_paths:
         load_dotenv(env_path)
         break
 
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import logging
 
 from .models import (
@@ -42,6 +45,7 @@ from .models import (
     Token,
     UserLogin,
     GenerationRequest,
+    BuildSuggestionRequest,
     DocumentMetadata,
     Cluster,
     Concept,
@@ -73,9 +77,17 @@ import hashlib
 
 STORAGE_PATH = os.environ.get('SYNCBOARD_STORAGE_PATH', 'storage.json')
 VECTOR_DIM = int(os.environ.get('SYNCBOARD_VECTOR_DIM', '256'))
-SECRET_KEY = os.environ.get('SYNCBOARD_SECRET_KEY', 'your-secret-key-change-in-production')
+SECRET_KEY = os.environ.get('SYNCBOARD_SECRET_KEY')
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SYNCBOARD_SECRET_KEY environment variable must be set. "
+        "Generate one with: openssl rand -hex 32"
+    )
 TOKEN_EXPIRE_MINUTES = int(os.environ.get('SYNCBOARD_TOKEN_EXPIRE_MINUTES', '1440'))
 ALLOWED_ORIGINS = os.environ.get('SYNCBOARD_ALLOWED_ORIGINS', '*')
+
+# File upload limits (50MB max)
+MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 
 # =============================================================================
 # FastAPI Application
@@ -86,6 +98,11 @@ app = FastAPI(
     description="AI-powered knowledge management with auto-clustering",
     version="3.0.0"
 )
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 origins = ALLOWED_ORIGINS.split(',') if ALLOWED_ORIGINS != '*' else ['*']
@@ -210,28 +227,30 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 # =============================================================================
 
 @app.post("/users", response_model=User)
-async def create_user(user_create: UserCreate) -> User:
-    """Register new user."""
+@limiter.limit("3/minute")
+async def create_user(request: Request, user_create: UserCreate) -> User:
+    """Register new user. Rate limited to 3 attempts per minute."""
     if user_create.username in users:
         raise HTTPException(status_code=400, detail="Username already exists")
-    
+
     users[user_create.username] = hash_password(user_create.password)
     save_storage(STORAGE_PATH, documents, metadata, clusters, users)
     logger.info(f"Created user: {user_create.username}")
-    
+
     return User(username=user_create.username)
 
 
 @app.post("/token", response_model=Token)
-async def login(user_login: UserLogin) -> Token:
-    """Login and get token."""
+@limiter.limit("5/minute")
+async def login(request: Request, user_login: UserLogin) -> Token:
+    """Login and get token. Rate limited to 5 attempts per minute."""
     stored_hash = users.get(user_login.username)
     if not stored_hash or stored_hash != hash_password(user_login.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
-    
+
     access_token = create_access_token(data={"sub": user_login.username})
     return Token(access_token=access_token)
 
@@ -387,7 +406,17 @@ async def upload_file(
     """Upload file (PDF, audio, etc) as base64."""
     try:
         file_bytes = base64.b64decode(req.content)
-        document_text = ingest.process_file_bytes(file_bytes, req.filename)
+
+        # Validate file size
+        if len(file_bytes) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB"
+            )
+
+        document_text = ingest.ingest_upload_file(req.filename, file_bytes)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {exc}")
     
@@ -441,6 +470,15 @@ async def upload_image(
     """Upload and process image with OCR."""
     try:
         image_bytes = base64.b64decode(req.content)
+
+        # Validate file size
+        if len(image_bytes) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB"
+            )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64: {e}")
     
@@ -608,10 +646,11 @@ async def search_full_content(
 
 @app.post("/what_can_i_build")
 async def what_can_i_build(
-    max_suggestions: int = 5,
+    req: BuildSuggestionRequest,
     current_user: User = Depends(get_current_user)
 ):
     """Analyze knowledge bank and suggest viable projects."""
+    max_suggestions = req.max_suggestions
     if max_suggestions < 1 or max_suggestions > 10:
         max_suggestions = 5
     
