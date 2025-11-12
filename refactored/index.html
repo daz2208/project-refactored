@@ -214,8 +214,8 @@
             <h2>Login / Register</h2>
             <input type="text" id="username" placeholder="Username">
             <input type="password" id="password" placeholder="Password">
-            <button onclick="login()">Login</button>
-            <button class="secondary" onclick="register()">Register</button>
+            <button onclick="login(event)">Login</button>
+            <button class="secondary" onclick="register(event)">Register</button>
         </div>
         
         <!-- Main Content (hidden until logged in) -->
@@ -243,17 +243,34 @@
                     <div id="clustersList">
                         <!-- Clusters populated here -->
                     </div>
-                    
+
                     <button onclick="loadClusters()" style="width: 100%; margin-top: 20px;">
                         Refresh Clusters
                     </button>
+
+                    <!-- Phase 4: Export Functionality -->
+                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+                        <h3 style="font-size: 0.9rem; margin-bottom: 10px;">Export All</h3>
+                        <div style="display: flex; gap: 8px;">
+                            <button onclick="exportAll('json')" style="flex: 1; padding: 8px; font-size: 0.85rem;">📄 JSON</button>
+                            <button onclick="exportAll('markdown')" style="flex: 1; padding: 8px; font-size: 0.85rem;">📝 Markdown</button>
+                        </div>
+                    </div>
+
+                    <!-- Phase 4: Keyboard Shortcuts Hint -->
+                    <div style="margin-top: 15px; padding: 10px; background: #1a1a1a; border-radius: 4px; font-size: 0.75rem; color: #888;">
+                        <strong style="color: #00d4ff;">⌨️ Shortcuts:</strong><br/>
+                        <span style="font-family: monospace;">Ctrl+K</span> - Search<br/>
+                        <span style="font-family: monospace;">Esc</span> - Clear<br/>
+                        <span style="font-family: monospace;">N</span> - Scroll to top
+                    </div>
                 </div>
                 
                 <!-- Content Area -->
                 <div class="content-area">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                         <h2>🔍 Search & Explore</h2>
-                        <button onclick="whatCanIBuild()">What Can I Build?</button>
+                        <button onclick="whatCanIBuild(event)">What Can I Build?</button>
                     </div>
                     
                     <input type="text" id="searchQuery" placeholder="Search your knowledge...">

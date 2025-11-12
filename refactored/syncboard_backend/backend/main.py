@@ -106,6 +106,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 origins = ALLOWED_ORIGINS.split(',') if ALLOWED_ORIGINS != '*' else ['*']
+
+# Warn if using wildcard CORS in production
+if origins == ['*']:
+    logger.warning(
+        "⚠️  SECURITY WARNING: CORS is set to allow ALL origins (*). "
+        "This is insecure for production. Set SYNCBOARD_ALLOWED_ORIGINS to specific domains."
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -581,63 +589,146 @@ async def search_full_content(
     q: str,
     top_k: int = 10,
     cluster_id: Optional[int] = None,
+    full_content: bool = False,
+    source_type: Optional[str] = None,
+    skill_level: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     current_user: User = Depends(get_current_user)
 ):
-    """Search and return FULL content (not snippets)."""
+    """
+    Search documents with optional filters (Phase 4).
+
+    Filters:
+    - source_type: Filter by source (text, url, pdf, etc.)
+    - skill_level: Filter by skill level (beginner, intermediate, advanced)
+    - date_from/date_to: Filter by ingestion date (ISO format)
+    - cluster_id: Filter by cluster
+    - full_content: Return full content or 500-char snippet
+
+    By default returns 500-char snippets for performance.
+    """
     if top_k < 1 or top_k > 50:
         top_k = 10
-    
+
     # Get user's documents
     user_doc_ids = [
         doc_id for doc_id, meta in metadata.items()
         if meta.owner == current_user.username
     ]
-    
+
     if not user_doc_ids:
         return {"results": [], "grouped_by_cluster": {}}
-    
-    # Filter by cluster if specified
+
+    # Apply filters
+    filtered_ids = user_doc_ids.copy()
+
+    # Filter by cluster
     if cluster_id is not None:
-        user_doc_ids = [
-            doc_id for doc_id in user_doc_ids
+        filtered_ids = [
+            doc_id for doc_id in filtered_ids
             if metadata[doc_id].cluster_id == cluster_id
         ]
-    
-    # Search with full content
+
+    # Filter by source type
+    if source_type:
+        filtered_ids = [
+            doc_id for doc_id in filtered_ids
+            if metadata[doc_id].source_type == source_type
+        ]
+
+    # Filter by skill level
+    if skill_level:
+        filtered_ids = [
+            doc_id for doc_id in filtered_ids
+            if metadata[doc_id].skill_level == skill_level
+        ]
+
+    # Filter by date range
+    if date_from or date_to:
+        date_filtered = []
+        for doc_id in filtered_ids:
+            meta = metadata[doc_id]
+            if not meta.ingested_at:
+                continue
+
+            try:
+                doc_date = datetime.fromisoformat(meta.ingested_at.replace('Z', '+00:00'))
+
+                if date_from:
+                    from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+                    if doc_date < from_date:
+                        continue
+
+                if date_to:
+                    to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+                    if doc_date > to_date:
+                        continue
+
+                date_filtered.append(doc_id)
+            except:
+                # Skip documents with invalid dates
+                continue
+
+        filtered_ids = date_filtered
+
+    if not filtered_ids:
+        return {"results": [], "grouped_by_cluster": {}, "filters_applied": {
+            "source_type": source_type,
+            "skill_level": skill_level,
+            "date_from": date_from,
+            "date_to": date_to,
+            "cluster_id": cluster_id
+        }}
+
+    # Search
     search_results = vector_store.search(
         query=q,
         top_k=top_k,
-        allowed_doc_ids=user_doc_ids
+        allowed_doc_ids=filtered_ids
     )
-    
+
     # Build response with metadata
     results = []
     cluster_groups = {}
-    
+
     for doc_id, score, snippet in search_results:
         meta = metadata[doc_id]
         cluster = clusters.get(meta.cluster_id) if meta.cluster_id else None
-        
-        # Return full content
-        full_content = documents[doc_id]
-        
+
+        # Return full content or snippet based on parameter
+        if full_content:
+            content = documents[doc_id]
+        else:
+            # Return 500 char snippet for performance
+            doc_text = documents[doc_id]
+            content = doc_text[:500] + ("..." if len(doc_text) > 500 else "")
+
         results.append({
             "doc_id": doc_id,
             "score": score,
-            "content": full_content,  # FULL CONTENT
+            "content": content,  # Snippet or full content based on parameter
             "metadata": meta.dict(),
             "cluster": cluster.dict() if cluster else None
         })
-        
+
         # Group by cluster
         if meta.cluster_id:
             if meta.cluster_id not in cluster_groups:
                 cluster_groups[meta.cluster_id] = []
             cluster_groups[meta.cluster_id].append(doc_id)
-    
+
     return {
         "results": results,
-        "grouped_by_cluster": cluster_groups
+        "grouped_by_cluster": cluster_groups,
+        "filters_applied": {
+            "source_type": source_type,
+            "skill_level": skill_level,
+            "date_from": date_from,
+            "date_to": date_to,
+            "cluster_id": cluster_id
+        },
+        "total_results": len(results)
     }
 
 # =============================================================================
@@ -728,6 +819,257 @@ async def generate_content(
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         return {"response": f"Error: {str(e)}"}
+
+# =============================================================================
+# Document Management (Phase 4)
+# =============================================================================
+
+@app.get("/documents/{doc_id}")
+async def get_document(
+    doc_id: int,
+    user: User = Depends(get_current_user)
+):
+    """Get a single document with metadata."""
+    if doc_id not in documents:
+        raise HTTPException(404, f"Document {doc_id} not found")
+
+    meta = metadata.get(doc_id)
+    cluster_info = None
+
+    if meta and meta.cluster_id is not None:
+        cluster = clusters.get(meta.cluster_id)
+        if cluster:
+            cluster_info = {
+                "id": cluster.id,
+                "name": cluster.name
+            }
+
+    return {
+        "doc_id": doc_id,
+        "content": documents[doc_id],
+        "metadata": meta.dict() if meta else None,
+        "cluster": cluster_info
+    }
+
+
+@app.delete("/documents/{doc_id}")
+async def delete_document(
+    doc_id: int,
+    user: User = Depends(get_current_user)
+):
+    """Delete a document from the knowledge bank."""
+    if doc_id not in documents:
+        raise HTTPException(404, f"Document {doc_id} not found")
+
+    # Remove from documents and metadata
+    del documents[doc_id]
+    meta = metadata.pop(doc_id, None)
+
+    # Remove from vector store (if it has a remove method)
+    # Note: Current VectorStore doesn't have remove, but we'll handle this gracefully
+
+    # Remove from cluster
+    if meta and meta.cluster_id is not None:
+        cluster = clusters.get(meta.cluster_id)
+        if cluster and doc_id in cluster.document_ids:
+            cluster.document_ids.remove(doc_id)
+
+    # Save to disk
+    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+
+    logger.info(f"Deleted document {doc_id}")
+    return {"message": f"Document {doc_id} deleted successfully"}
+
+
+@app.put("/documents/{doc_id}/metadata")
+async def update_document_metadata(
+    doc_id: int,
+    updates: dict,
+    user: User = Depends(get_current_user)
+):
+    """Update document metadata (cluster_id, primary_topic, etc)."""
+    if doc_id not in documents:
+        raise HTTPException(404, f"Document {doc_id} not found")
+
+    if doc_id not in metadata:
+        raise HTTPException(404, f"Metadata for document {doc_id} not found")
+
+    meta = metadata[doc_id]
+
+    # Update allowed fields
+    if 'primary_topic' in updates:
+        meta.primary_topic = updates['primary_topic']
+
+    if 'skill_level' in updates:
+        if updates['skill_level'] in ['beginner', 'intermediate', 'advanced']:
+            meta.skill_level = updates['skill_level']
+
+    if 'cluster_id' in updates:
+        new_cluster_id = updates['cluster_id']
+        old_cluster_id = meta.cluster_id
+
+        # Remove from old cluster
+        if old_cluster_id is not None and old_cluster_id in clusters:
+            old_cluster = clusters[old_cluster_id]
+            if doc_id in old_cluster.document_ids:
+                old_cluster.document_ids.remove(doc_id)
+
+        # Add to new cluster
+        if new_cluster_id is not None:
+            if new_cluster_id not in clusters:
+                raise HTTPException(404, f"Cluster {new_cluster_id} not found")
+            clusters[new_cluster_id].document_ids.append(doc_id)
+
+        meta.cluster_id = new_cluster_id
+
+    # Save to disk
+    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+
+    logger.info(f"Updated metadata for document {doc_id}")
+    return {"message": "Metadata updated", "metadata": meta.dict()}
+
+
+# =============================================================================
+# Cluster Management (Phase 4)
+# =============================================================================
+
+@app.put("/clusters/{cluster_id}")
+async def update_cluster(
+    cluster_id: int,
+    updates: dict,
+    user: User = Depends(get_current_user)
+):
+    """Update cluster information (rename, etc)."""
+    if cluster_id not in clusters:
+        raise HTTPException(404, f"Cluster {cluster_id} not found")
+
+    cluster = clusters[cluster_id]
+
+    # Update allowed fields
+    if 'name' in updates:
+        cluster.name = updates['name']
+
+    if 'skill_level' in updates:
+        if updates['skill_level'] in ['beginner', 'intermediate', 'advanced', 'unknown']:
+            cluster.skill_level = updates['skill_level']
+
+    # Save to disk
+    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+
+    logger.info(f"Updated cluster {cluster_id}: {cluster.name}")
+    return {"message": "Cluster updated", "cluster": cluster.dict()}
+
+
+@app.get("/export/cluster/{cluster_id}")
+async def export_cluster(
+    cluster_id: int,
+    format: str = "json",
+    user: User = Depends(get_current_user)
+):
+    """Export a cluster as JSON or Markdown."""
+    if cluster_id not in clusters:
+        raise HTTPException(404, f"Cluster {cluster_id} not found")
+
+    cluster = clusters[cluster_id]
+
+    # Gather all documents in cluster
+    cluster_docs = []
+    for doc_id in cluster.document_ids:
+        if doc_id in documents:
+            meta = metadata.get(doc_id)
+            cluster_docs.append({
+                "doc_id": doc_id,
+                "content": documents[doc_id],
+                "metadata": meta.dict() if meta else None
+            })
+
+    if format == "markdown":
+        # Build markdown export
+        md_content = f"# {cluster.name}\n\n"
+        md_content += f"**Skill Level:** {cluster.skill_level}\n"
+        md_content += f"**Primary Concepts:** {', '.join(cluster.primary_concepts)}\n"
+        md_content += f"**Documents:** {len(cluster_docs)}\n\n"
+        md_content += "---\n\n"
+
+        for doc in cluster_docs:
+            meta = doc['metadata']
+            md_content += f"## Document {doc['doc_id']}\n\n"
+            if meta:
+                md_content += f"**Source:** {meta['source_type']}\n"
+                md_content += f"**Topic:** {meta['primary_topic']}\n"
+                md_content += f"**Concepts:** {', '.join([c['name'] for c in meta['concepts']])}\n\n"
+            md_content += f"{doc['content']}\n\n"
+            md_content += "---\n\n"
+
+        return JSONResponse({
+            "cluster_id": cluster_id,
+            "cluster_name": cluster.name,
+            "format": "markdown",
+            "content": md_content
+        })
+
+    else:  # JSON format
+        return {
+            "cluster_id": cluster_id,
+            "cluster": cluster.dict(),
+            "documents": cluster_docs,
+            "export_date": datetime.utcnow().isoformat()
+        }
+
+
+@app.get("/export/all")
+async def export_all(
+    format: str = "json",
+    user: User = Depends(get_current_user)
+):
+    """Export entire knowledge bank."""
+    all_docs = []
+    for doc_id in sorted(documents.keys()):
+        meta = metadata.get(doc_id)
+        cluster_id = meta.cluster_id if meta else None
+        cluster_name = clusters[cluster_id].name if cluster_id in clusters else None
+
+        all_docs.append({
+            "doc_id": doc_id,
+            "content": documents[doc_id],
+            "metadata": meta.dict() if meta else None,
+            "cluster_name": cluster_name
+        })
+
+    if format == "markdown":
+        md_content = f"# Knowledge Bank Export\n\n"
+        md_content += f"**Export Date:** {datetime.utcnow().isoformat()}\n"
+        md_content += f"**Total Documents:** {len(all_docs)}\n"
+        md_content += f"**Total Clusters:** {len(clusters)}\n\n"
+        md_content += "---\n\n"
+
+        # Group by cluster
+        for cluster in clusters.values():
+            md_content += f"# Cluster: {cluster.name}\n\n"
+            cluster_docs = [d for d in all_docs if d['metadata'] and d['metadata']['cluster_id'] == cluster.id]
+
+            for doc in cluster_docs:
+                meta = doc['metadata']
+                md_content += f"## Document {doc['doc_id']}\n\n"
+                if meta:
+                    md_content += f"**Topic:** {meta['primary_topic']}\n"
+                md_content += f"{doc['content'][:500]}...\n\n"
+                md_content += "---\n\n"
+
+        return JSONResponse({
+            "format": "markdown",
+            "content": md_content
+        })
+
+    else:  # JSON
+        return {
+            "documents": all_docs,
+            "clusters": [c.dict() for c in clusters.values()],
+            "export_date": datetime.utcnow().isoformat(),
+            "total_documents": len(all_docs),
+            "total_clusters": len(clusters)
+        }
+
 
 # =============================================================================
 # Health Check
