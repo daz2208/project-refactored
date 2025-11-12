@@ -323,20 +323,26 @@ async function loadClusters() {
 
 function displayClusters(clusters) {
     const list = document.getElementById('clustersList');
-    
+
     if (clusters.length === 0) {
         list.innerHTML = '<p style="color: #666;">No clusters yet. Upload some content!</p>';
         return;
     }
-    
+
     list.innerHTML = clusters.map(c => `
-        <div class="cluster-card" onclick="loadCluster(${c.id})">
-            <h3>${c.name}</h3>
-            <p>${c.doc_count} documents • ${c.skill_level}</p>
-            <div class="concepts-list">
-                ${c.primary_concepts.slice(0, 3).map(concept => 
-                    `<span class="concept-tag">${concept}</span>`
-                ).join('')}
+        <div class="cluster-card">
+            <div onclick="loadCluster(${c.id})" style="cursor: pointer;">
+                <h3>${c.name}</h3>
+                <p>${c.doc_count} documents • ${c.skill_level}</p>
+                <div class="concepts-list">
+                    ${c.primary_concepts.slice(0, 3).map(concept =>
+                        `<span class="concept-tag">${concept}</span>`
+                    ).join('')}
+                </div>
+            </div>
+            <div style="margin-top: 10px; display: flex; gap: 5px; font-size: 0.85rem;">
+                <button onclick="event.stopPropagation(); exportCluster(${c.id}, 'json')" style="padding: 4px 8px; font-size: 0.8rem;" title="Export as JSON">📄 JSON</button>
+                <button onclick="event.stopPropagation(); exportCluster(${c.id}, 'markdown')" style="padding: 4px 8px; font-size: 0.8rem;" title="Export as Markdown">📝 MD</button>
             </div>
         </div>
     `).join('');
@@ -387,37 +393,85 @@ async function searchKnowledge() {
     }
 }
 
-function displaySearchResults(results) {
+function displaySearchResults(results, searchQuery = '') {
     const area = document.getElementById('resultsArea');
-    
+
     if (results.length === 0) {
         area.innerHTML = '<p style="color: #666;">No results found</p>';
         return;
     }
-    
+
     area.innerHTML = `<h3>Search Results (${results.length})</h3>` +
         results.map(r => `
             <div class="search-result">
-                <div style="display: flex; justify-content: space-between;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
                     <strong>Doc ${r.doc_id}</strong>
-                    <span style="color: #888;">Score: ${r.score.toFixed(3)}</span>
+                    <div style="display: flex; gap: 8px;">
+                        <span style="color: #888;">Score: ${r.score.toFixed(3)}</span>
+                        <button class="icon-btn" onclick="deleteDocument(${r.doc_id})" title="Delete" style="background: none; border: none; cursor: pointer; font-size: 1.2rem;">🗑️</button>
+                    </div>
                 </div>
                 <p style="font-size: 0.9rem; color: #aaa; margin: 5px 0;">
-                    ${r.metadata.source_type} • 
-                    Cluster: ${r.cluster?.name || 'None'} • 
+                    ${r.metadata.source_type} •
+                    Cluster: ${r.cluster?.name || 'None'} •
                     ${r.metadata.skill_level}
                 </p>
                 <div class="concepts-list">
-                    ${r.metadata.concepts.slice(0, 5).map(c => 
+                    ${r.metadata.concepts.slice(0, 5).map(c =>
                         `<span class="concept-tag">${c.name}</span>`
                     ).join('')}
                 </div>
                 <details style="margin-top: 10px;">
                     <summary>View Full Content (${r.content.length} chars)</summary>
-                    <pre>${escapeHtml(r.content)}</pre>
+                    <pre>${highlightSearchTerms(escapeHtml(r.content), searchQuery)}</pre>
                 </details>
             </div>
         `).join('');
+}
+
+function highlightSearchTerms(text, query) {
+    if (!query || !text) return text;
+    const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+    if (terms.length === 0) return text;
+
+    let highlighted = text;
+    terms.forEach(term => {
+        const regex = new RegExp(`(${escapeRegex(term)})`, 'gi');
+        highlighted = highlighted.replace(regex, '<mark style="background: #ffaa00; padding: 2px;">$1</mark>');
+    });
+    return highlighted;
+}
+
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function deleteDocument(docId) {
+    if (!confirm(`Delete document ${docId}? This cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/documents/${docId}`, {
+            method: 'DELETE',
+            headers: {'Authorization': `Bearer ${token}`}
+        });
+
+        if (res.ok) {
+            showToast(`Document ${docId} deleted`, 'success');
+            const query = document.getElementById('searchQuery').value;
+            if (query.trim()) {
+                searchKnowledge();
+            } else {
+                loadClusters();
+            }
+        } else {
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
+        }
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
+    }
 }
 
 // =============================================================================
@@ -573,6 +627,119 @@ function debounceSearch() {
 }
 
 // =============================================================================
+// EXPORT FUNCTIONALITY (Phase 4)
+// =============================================================================
+
+async function exportCluster(clusterId, format = 'json') {
+    try {
+        const res = await fetch(`${API_BASE}/export/cluster/${clusterId}?format=${format}`, {
+            headers: {'Authorization': `Bearer ${token}`}
+        });
+
+        if (!res.ok) {
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        const data = await res.json();
+
+        // Download file
+        if (format === 'markdown') {
+            downloadFile(data.content, `cluster_${clusterId}_${data.cluster_name}.md`, 'text/markdown');
+        } else {
+            downloadFile(JSON.stringify(data, null, 2), `cluster_${clusterId}.json`, 'application/json');
+        }
+
+        showToast(`Cluster exported as ${format.toUpperCase()}`, 'success');
+    } catch (e) {
+        showToast('Export failed: ' + e.message, 'error');
+    }
+}
+
+async function exportAll(format = 'json') {
+    if (!confirm(`Export entire knowledge bank as ${format.toUpperCase()}?`)) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/export/all?format=${format}`, {
+            headers: {'Authorization': `Bearer ${token}`}
+        });
+
+        if (!res.ok) {
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        const data = await res.json();
+
+        // Download file
+        const timestamp = new Date().toISOString().split('T')[0];
+        if (format === 'markdown') {
+            downloadFile(data.content, `knowledge_bank_${timestamp}.md`, 'text/markdown');
+        } else {
+            downloadFile(JSON.stringify(data, null, 2), `knowledge_bank_${timestamp}.json`, 'application/json');
+        }
+
+        showToast('Full export complete!', 'success');
+    } catch (e) {
+        showToast('Export failed: ' + e.message, 'error');
+    }
+}
+
+function downloadFile(content, filename, contentType) {
+    const blob = new Blob([content], { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// =============================================================================
+// KEYBOARD SHORTCUTS (Phase 4)
+// =============================================================================
+
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+K or Cmd+K: Focus search
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const searchInput = document.getElementById('searchQuery');
+            if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+            }
+        }
+
+        // Esc: Clear search or close modals
+        if (e.key === 'Escape') {
+            const searchInput = document.getElementById('searchQuery');
+            if (searchInput && searchInput.value) {
+                searchInput.value = '';
+                document.getElementById('resultsArea').innerHTML = '';
+            }
+        }
+
+        // N: Scroll to top (for new upload)
+        if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            // Only if not in an input field
+            if (document.activeElement.tagName !== 'INPUT' &&
+                document.activeElement.tagName !== 'TEXTAREA') {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+    });
+
+    console.log('⌨️  Keyboard shortcuts enabled: Ctrl+K (search), Esc (clear), N (scroll to top)');
+}
+
+// =============================================================================
 // INIT
 // =============================================================================
 
@@ -585,10 +752,13 @@ if (savedToken) {
     loadClusters();
 }
 
-// Set up search input debouncing
+// Set up search input debouncing and keyboard shortcuts
 document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('searchQuery');
     if (searchInput) {
         searchInput.addEventListener('input', debounceSearch);
     }
+
+    // Enable keyboard shortcuts (Phase 4)
+    setupKeyboardShortcuts();
 });
