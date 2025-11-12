@@ -89,6 +89,11 @@ class GenerationRequest(BaseModel):
     model: Optional[str] = "gpt-5-mini"
 
 
+class BuildSuggestionRequest(BaseModel):
+    """Schema for build suggestion requests."""
+    max_suggestions: Optional[int] = 5
+
+
 # =============================================================================
 # NEW: Concept Extraction & Clustering Models
 # =============================================================================

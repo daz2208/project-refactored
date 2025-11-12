@@ -42,6 +42,7 @@ from .models import (
     Token,
     UserLogin,
     GenerationRequest,
+    BuildSuggestionRequest,
     DocumentMetadata,
     Cluster,
     Concept,
@@ -387,7 +388,7 @@ async def upload_file(
     """Upload file (PDF, audio, etc) as base64."""
     try:
         file_bytes = base64.b64decode(req.content)
-        document_text = ingest.process_file_bytes(file_bytes, req.filename)
+        document_text = ingest.ingest_upload_file(req.filename, file_bytes)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {exc}")
     
@@ -608,10 +609,11 @@ async def search_full_content(
 
 @app.post("/what_can_i_build")
 async def what_can_i_build(
-    max_suggestions: int = 5,
+    req: BuildSuggestionRequest,
     current_user: User = Depends(get_current_user)
 ):
     """Analyze knowledge bank and suggest viable projects."""
+    max_suggestions = req.max_suggestions
     if max_suggestions < 1 or max_suggestions > 10:
         max_suggestions = 5
     
