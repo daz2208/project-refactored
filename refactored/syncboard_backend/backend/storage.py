@@ -6,6 +6,8 @@ Simplified from board-based system to direct document storage with clustering.
 
 import json
 import os
+import tempfile
+import shutil
 from typing import Tuple, Dict, List
 
 from .models import DocumentMetadata, Cluster, Concept
@@ -85,7 +87,10 @@ def save_storage(
     users: Dict[str, str]
 ) -> None:
     """
-    Persist documents, metadata, clusters, and users to disk.
+    Persist documents, metadata, clusters, and users to disk atomically.
+
+    Uses atomic write (write to temp file, then rename) to prevent corruption
+    if the process crashes mid-write.
 
     Args:
         path: Path to the JSON file to write
@@ -100,6 +105,22 @@ def save_storage(
         'clusters': [cluster.dict() for cluster in clusters.values()],
         'users': users,
     }
-    
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    # Atomic write: write to temp file in same directory, then rename
+    # This ensures the file is never partially written
+    dir_path = os.path.dirname(os.path.abspath(path)) or '.'
+
+    with tempfile.NamedTemporaryFile(
+        mode='w',
+        encoding='utf-8',
+        dir=dir_path,
+        delete=False,
+        suffix='.tmp'
+    ) as tmp_file:
+        json.dump(data, tmp_file, ensure_ascii=False, indent=2)
+        tmp_file.flush()
+        os.fsync(tmp_file.fileno())  # Force write to disk
+        tmp_path = tmp_file.name
+
+    # Atomic rename (POSIX systems guarantee atomicity)
+    shutil.move(tmp_path, path)

@@ -1,6 +1,6 @@
 """Data models and schemas for SyncBoard 3.0 Knowledge Bank."""
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -65,6 +65,26 @@ class UserCreate(BaseModel):
     """Schema for creating a new user."""
     username: str
     password: str
+
+    @validator('username')
+    def username_valid(cls, v):
+        """Validate username meets minimum requirements."""
+        if len(v) < 3:
+            raise ValueError('Username must be at least 3 characters')
+        if len(v) > 50:
+            raise ValueError('Username must be less than 50 characters')
+        if not v.replace('_', '').replace('-', '').isalnum():
+            raise ValueError('Username can only contain letters, numbers, underscores, and hyphens')
+        return v
+
+    @validator('password')
+    def password_valid(cls, v):
+        """Validate password meets security requirements."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if len(v) > 128:
+            raise ValueError('Password must be less than 128 characters')
+        return v
 
 
 class UserLogin(BaseModel):

@@ -6,9 +6,13 @@ scikit-learn
 requests
 python-multipart
 python-dotenv
+slowapi
 
 # AI API clients
 openai
+
+# Retry logic
+tenacity
 
 # Content ingestion dependencies
 yt-dlp
