@@ -1,0 +1,58 @@
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.env.local
+
+# Storage
+storage.json
+*.db
+*.sqlite
+syncboard.db
+
+# Images
+images/
+*.png
+*.jpg
+*.jpeg
+
+# Alembic
+alembic/versions/*.pyc
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# CI/CD
+.github/

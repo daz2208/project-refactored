@@ -1,0 +1,82 @@
+# =============================================================================
+# SyncBoard 3.0 Knowledge Bank - Docker Compose (Phase 6)
+# =============================================================================
+# Development and production orchestration for backend + PostgreSQL
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  db:
+    image: postgres:15-alpine
+    container_name: syncboard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: syncboard
+      POSTGRES_PASSWORD: syncboard
+      POSTGRES_DB: syncboard
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U syncboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - syncboard-network
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: syncboard-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Database connection
+      DATABASE_URL: postgresql://syncboard:syncboard@db:5432/syncboard
+
+      # Security
+      SYNCBOARD_SECRET_KEY: ${SYNCBOARD_SECRET_KEY:-your-secret-key-here-change-in-production}
+
+      # OpenAI API
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-replace-with-your-key}
+
+      # CORS
+      SYNCBOARD_ALLOWED_ORIGINS: ${SYNCBOARD_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000}
+
+      # Auth
+      SYNCBOARD_TOKEN_EXPIRE_MINUTES: ${SYNCBOARD_TOKEN_EXPIRE_MINUTES:-1440}
+    volumes:
+      # Mount storage directories for persistent file storage
+      - ./storage:/app/storage
+      - ./images:/app/images
+
+      # Development: Mount code for hot reload (comment out for production)
+      - ./backend:/app/backend
+    ports:
+      - "8000:8000"
+    networks:
+      - syncboard-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+    driver: local
+
+# Network for service communication
+networks:
+  syncboard-network:
+    driver: bridge

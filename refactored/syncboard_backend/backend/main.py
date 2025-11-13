@@ -1157,10 +1157,22 @@ async def health_check():
     except Exception:
         health_data["dependencies"]["openai_configured"] = False
 
+    # Check database health (Phase 6)
+    try:
+        from .database import check_database_health
+        db_health = check_database_health()
+        health_data["dependencies"]["database"] = db_health
+    except Exception as e:
+        health_data["dependencies"]["database"] = {
+            "database_connected": False,
+            "error": str(e)
+        }
+        logger.error(f"Failed to check database health: {e}")
+
     # Overall health status
     all_healthy = all([
         health_data["dependencies"].get("disk_healthy", False),
-        health_data["dependencies"].get("storage_file_exists", False),
+        health_data["dependencies"].get("storage_file_exists", False) or health_data["dependencies"].get("database", {}).get("database_connected", False),  # Either file or database
         health_data["dependencies"].get("openai_configured", False)
     ])
 
