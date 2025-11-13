@@ -9,7 +9,7 @@ import os
 import asyncio
 import base64
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -61,6 +61,8 @@ from .clustering import ClusteringEngine
 from .image_processor import ImageProcessor
 from .build_suggester import BuildSuggester
 from .analytics_service import AnalyticsService
+from .duplicate_detection import DuplicateDetector
+from .advanced_features_service import TagsService, SavedSearchesService, DocumentRelationshipsService
 
 # Try to import AI generation
 try:
@@ -201,14 +203,6 @@ async def startup_event():
             save_storage_to_db(documents, metadata, clusters, users)
             logger.info("Created default test user in file")
 
-# Mount static files
-try:
-    static_path = Path(__file__).parent / 'static'
-    if static_path.exists():
-        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
-except Exception as e:
-    logger.warning(f"Could not mount static files: {e}")
-
 # =============================================================================
 # Authentication Helpers
 # =============================================================================
@@ -274,9 +268,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 # =============================================================================
 
 @app.post("/users", response_model=User)
-@limiter.limit("3/minute")
+@limiter.limit("5/minute")
 async def create_user(request: Request, user_create: UserCreate) -> User:
-    """Register new user. Rate limited to 3 attempts per minute."""
+    """Register new user. Limited to 5 registrations per minute per IP."""
     if user_create.username in users:
         raise HTTPException(status_code=400, detail="Username already exists")
 
@@ -288,9 +282,9 @@ async def create_user(request: Request, user_create: UserCreate) -> User:
 
 
 @app.post("/token", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def login(request: Request, user_login: UserLogin) -> Token:
-    """Login and get token. Rate limited to 5 attempts per minute."""
+    """Login and get token. Limited to 10 login attempts per minute per IP."""
     stored_hash = users.get(user_login.username)
     if not stored_hash or stored_hash != hash_password(user_login.password):
         raise HTTPException(
@@ -1241,3 +1235,363 @@ async def get_analytics(
             status_code=500,
             detail=f"Failed to generate analytics: {str(e)}"
         )
+
+
+# =============================================================================
+# Duplicate Detection (Phase 7.2)
+# =============================================================================
+
+@app.get("/duplicates")
+async def find_duplicates(
+    threshold: float = 0.85,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user)
+):
+    """Find potentially duplicate documents based on content similarity."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            detector = DuplicateDetector(db, vector_store)
+            duplicates = detector.find_duplicates(
+                username=current_user.username,
+                similarity_threshold=threshold,
+                limit=limit
+            )
+            return {"duplicate_groups": duplicates}
+    except Exception as e:
+        logger.error(f"Duplicate detection failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/duplicates/{doc_id1}/{doc_id2}")
+async def get_duplicate_comparison(
+    doc_id1: int,
+    doc_id2: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed comparison of two potentially duplicate documents."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            detector = DuplicateDetector(db, vector_store)
+            comparison = detector.get_duplicate_content(doc_id1, doc_id2)
+            return comparison
+    except Exception as e:
+        logger.error(f"Duplicate comparison failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/duplicates/merge")
+async def merge_duplicate_documents(
+    keep_doc_id: int,
+    delete_doc_ids: List[int],
+    current_user: User = Depends(get_current_user)
+):
+    """Merge duplicate documents by keeping one and deleting others."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            detector = DuplicateDetector(db, vector_store)
+            result = detector.merge_duplicates(
+                keep_doc_id=keep_doc_id,
+                delete_doc_ids=delete_doc_ids,
+                username=current_user.username
+            )
+
+            # Update in-memory storage after merge
+            for doc_id in delete_doc_ids:
+                if doc_id in documents:
+                    del documents[doc_id]
+                if doc_id in metadata:
+                    del metadata[doc_id]
+                vector_store.remove_document(doc_id)
+
+            # Save changes
+            save_storage_to_db(documents, metadata, clusters, users)
+
+            return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Merge failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Tags System (Phase 7.3)
+# =============================================================================
+
+@app.post("/tags")
+async def create_tag(
+    name: str,
+    color: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new tag."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            tags_service = TagsService(db)
+            tag = tags_service.create_tag(name, current_user.username, color)
+            return tag
+    except Exception as e:
+        logger.error(f"Tag creation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tags")
+async def get_tags(current_user: User = Depends(get_current_user)):
+    """Get all tags for the current user."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            tags_service = TagsService(db)
+            tags = tags_service.get_user_tags(current_user.username)
+            return {"tags": tags}
+    except Exception as e:
+        logger.error(f"Get tags failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/documents/{doc_id}/tags/{tag_id}")
+async def add_tag_to_document(
+    doc_id: int,
+    tag_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Add a tag to a document."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            tags_service = TagsService(db)
+            result = tags_service.add_tag_to_document(doc_id, tag_id, current_user.username)
+            return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Add tag to document failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/documents/{doc_id}/tags/{tag_id}")
+async def remove_tag_from_document(
+    doc_id: int,
+    tag_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Remove a tag from a document."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            tags_service = TagsService(db)
+            result = tags_service.remove_tag_from_document(doc_id, tag_id, current_user.username)
+            return result
+    except Exception as e:
+        logger.error(f"Remove tag from document failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/{doc_id}/tags")
+async def get_document_tags(
+    doc_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Get all tags for a document."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            tags_service = TagsService(db)
+            tags = tags_service.get_document_tags(doc_id)
+            return {"tags": tags}
+    except Exception as e:
+        logger.error(f"Get document tags failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/tags/{tag_id}")
+async def delete_tag(
+    tag_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a tag."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            tags_service = TagsService(db)
+            result = tags_service.delete_tag(tag_id, current_user.username)
+            return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Delete tag failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Saved Searches (Phase 7.4)
+# =============================================================================
+
+@app.post("/saved-searches")
+async def save_search(
+    name: str,
+    query: str,
+    filters: Optional[Dict[str, Any]] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Save a search query for quick access."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            search_service = SavedSearchesService(db)
+            saved = search_service.save_search(name, query, filters, current_user.username)
+            return saved
+    except Exception as e:
+        logger.error(f"Save search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/saved-searches")
+async def get_saved_searches(current_user: User = Depends(get_current_user)):
+    """Get all saved searches for the current user."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            search_service = SavedSearchesService(db)
+            searches = search_service.get_saved_searches(current_user.username)
+            return {"saved_searches": searches}
+    except Exception as e:
+        logger.error(f"Get saved searches failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/saved-searches/{search_id}/use")
+async def use_saved_search(
+    search_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Use a saved search (returns query and filters, updates usage stats)."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            search_service = SavedSearchesService(db)
+            search_data = search_service.use_saved_search(search_id, current_user.username)
+            return search_data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Use saved search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/saved-searches/{search_id}")
+async def delete_saved_search(
+    search_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a saved search."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            search_service = SavedSearchesService(db)
+            result = search_service.delete_saved_search(search_id, current_user.username)
+            return result
+    except Exception as e:
+        logger.error(f"Delete saved search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Document Relationships (Phase 7.5)
+# =============================================================================
+
+@app.post("/documents/{source_doc_id}/relationships")
+async def add_document_relationship(
+    source_doc_id: int,
+    target_doc_id: int,
+    relationship_type: str = "related",
+    strength: Optional[float] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a relationship between two documents."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            rel_service = DocumentRelationshipsService(db)
+            result = rel_service.add_relationship(
+                source_doc_id, target_doc_id, relationship_type,
+                current_user.username, strength
+            )
+            return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Add relationship failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/{doc_id}/relationships")
+async def get_document_relationships(
+    doc_id: int,
+    relationship_type: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Get all relationships for a document."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            rel_service = DocumentRelationshipsService(db)
+            relationships = rel_service.get_related_documents(doc_id, relationship_type)
+            return {"relationships": relationships}
+    except Exception as e:
+        logger.error(f"Get relationships failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/documents/{source_doc_id}/relationships/{target_doc_id}")
+async def delete_document_relationship(
+    source_doc_id: int,
+    target_doc_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a relationship between documents."""
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            rel_service = DocumentRelationshipsService(db)
+            result = rel_service.delete_relationship(
+                source_doc_id, target_doc_id, current_user.username
+            )
+            return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Delete relationship failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================================================
+# Mount static files LAST (after all API routes)
+# =============================================================================
+# Static files mounted at "/" will catch all routes, so mount AFTER API endpoints
+try:
+    static_path = Path(__file__).parent / 'static'
+    if static_path.exists():
+        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
+        logger.info("✅ Static files mounted at /")
+except Exception as e:
+    logger.warning(f"Could not mount static files: {e}")

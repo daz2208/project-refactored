@@ -370,6 +370,122 @@
             color: #666;
             font-size: 0.8rem;
         }
+
+        /* Advanced Features Styles (Phase 7.2-7.5) */
+        .sub-tab-button {
+            background: #1a1a1a;
+            border: none;
+            color: #666;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 6px 6px 0 0;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+        }
+
+        .sub-tab-button:hover {
+            background: #2a2a2a;
+            color: #e0e0e0;
+        }
+
+        .sub-tab-button.active {
+            background: #2a2a2a;
+            color: #00d4ff;
+            font-weight: 600;
+            border-bottom: 2px solid #00d4ff;
+        }
+
+        .advanced-feature-section {
+            display: block;
+        }
+
+        .advanced-feature-section.hidden {
+            display: none;
+        }
+
+        .feature-results {
+            margin-top: 20px;
+        }
+
+        .duplicate-group {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .duplicate-item {
+            background: #1a1a1a;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .duplicate-similarity {
+            color: #f59e0b;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .tag-item {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 4px solid;
+        }
+
+        .tag-color-badge {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        .saved-search-item {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .saved-search-item:hover {
+            background: #333;
+            transform: translateX(5px);
+        }
+
+        .relationship-item {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .relationship-type-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .relationship-type-related { background: #4ade80; color: #000; }
+        .relationship-type-prerequisite { background: #f59e0b; color: #000; }
+        .relationship-type-followup { background: #60a5fa; color: #000; }
+        .relationship-type-alternative { background: #a78bfa; color: #000; }
+        .relationship-type-supersedes { background: #ef4444; color: #fff; }
     </style>
 </head>
 <body>
@@ -444,6 +560,7 @@
                     <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #333;">
                         <button id="searchTab" class="tab-button active" onclick="showTab('search')">🔍 Search & Explore</button>
                         <button id="analyticsTab" class="tab-button" onclick="showTab('analytics')">📊 Analytics Dashboard</button>
+                        <button id="advancedTab" class="tab-button" onclick="showTab('advanced')">⚡ Advanced Features</button>
                     </div>
 
                     <!-- Search Tab Content -->
@@ -515,6 +632,89 @@
                             <h3>🕒 Recent Activity</h3>
                             <div id="recentActivity" class="activity-list">
                                 <!-- Recent activity items -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Features Tab Content (Phase 7.2-7.5) -->
+                    <div id="advancedContent" class="tab-content hidden">
+                        <h2>⚡ Advanced Features</h2>
+
+                        <!-- Sub-tabs for Advanced Features -->
+                        <div style="display: flex; gap: 10px; margin: 20px 0; border-bottom: 1px solid #444;">
+                            <button id="duplicatesSubTab" class="sub-tab-button active" onclick="showAdvancedFeature('duplicates')">🔍 Duplicates</button>
+                            <button id="tagsSubTab" class="sub-tab-button" onclick="showAdvancedFeature('tags')">🏷️ Tags</button>
+                            <button id="savedSearchesSubTab" class="sub-tab-button" onclick="showAdvancedFeature('savedSearches')">💾 Saved Searches</button>
+                            <button id="relationshipsSubTab" class="sub-tab-button" onclick="showAdvancedFeature('relationships')">🔗 Relationships</button>
+                        </div>
+
+                        <!-- Duplicate Detection Section -->
+                        <div id="duplicatesFeature" class="advanced-feature-section">
+                            <h3>🔍 Duplicate Detection</h3>
+                            <p style="color: #888; margin-bottom: 20px;">Find and merge similar documents in your knowledge bank</p>
+
+                            <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+                                <div>
+                                    <label style="display: block; color: #888; margin-bottom: 5px;">Similarity Threshold:</label>
+                                    <input type="number" id="duplicateThreshold" value="0.85" min="0" max="1" step="0.05"
+                                           style="width: 100px; padding: 8px;">
+                                </div>
+                                <div style="display: flex; align-items: flex-end;">
+                                    <button onclick="findDuplicates()">Find Duplicates</button>
+                                </div>
+                            </div>
+
+                            <div id="duplicatesResults" class="feature-results">
+                                <!-- Duplicate groups will appear here -->
+                            </div>
+                        </div>
+
+                        <!-- Tags System Section -->
+                        <div id="tagsFeature" class="advanced-feature-section hidden">
+                            <h3>🏷️ Tags Management</h3>
+                            <p style="color: #888; margin-bottom: 20px;">Create and manage custom tags for organizing your documents</p>
+
+                            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                                <input type="text" id="newTagName" placeholder="Tag name" style="flex: 1;">
+                                <input type="color" id="newTagColor" value="#00d4ff" style="width: 60px;">
+                                <button onclick="createTag()">Create Tag</button>
+                            </div>
+
+                            <div id="tagsListContainer" class="feature-results">
+                                <!-- Tags list will appear here -->
+                            </div>
+                        </div>
+
+                        <!-- Saved Searches Section -->
+                        <div id="savedSearchesFeature" class="advanced-feature-section hidden">
+                            <h3>💾 Saved Searches</h3>
+                            <p style="color: #888; margin-bottom: 20px;">Quick access to your frequently used search queries</p>
+
+                            <div id="savedSearchesList" class="feature-results">
+                                <!-- Saved searches will appear here -->
+                            </div>
+                        </div>
+
+                        <!-- Document Relationships Section -->
+                        <div id="relationshipsFeature" class="advanced-feature-section hidden">
+                            <h3>🔗 Document Relationships</h3>
+                            <p style="color: #888; margin-bottom: 20px;">Link related documents together</p>
+
+                            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                                <input type="number" id="sourceDocId" placeholder="Source Doc ID" style="flex: 1;">
+                                <input type="number" id="targetDocId" placeholder="Target Doc ID" style="flex: 1;">
+                                <select id="relationshipType" style="flex: 1;">
+                                    <option value="related">Related</option>
+                                    <option value="prerequisite">Prerequisite</option>
+                                    <option value="followup">Follow-up</option>
+                                    <option value="alternative">Alternative</option>
+                                    <option value="supersedes">Supersedes</option>
+                                </select>
+                                <button onclick="createRelationship()">Link Documents</button>
+                            </div>
+
+                            <div id="relationshipsResults" class="feature-results">
+                                <!-- Relationships will appear here -->
                             </div>
                         </div>
                     </div>

@@ -123,7 +123,7 @@ PostgreSQL Database + Vector Store
 
 ## ✨ Features
 
-### ✅ Phase 1-7.1 Complete - Production Ready with Analytics!
+### ✅ Phase 1-7.5 Complete - Production Ready with Advanced Features!
 
 - ✅ **Security:** JWT auth, rate limiting, input validation, atomic saves
 - ✅ **Performance:** Async API calls, batch updates, LRU caching, search optimization
@@ -131,6 +131,10 @@ PostgreSQL Database + Vector Store
 - ✅ **Database:** PostgreSQL with SQLAlchemy ORM, full migration complete
 - ✅ **Features:** Document CRUD, search filters, export (JSON/Markdown), cluster management
 - ✅ **Analytics:** Comprehensive dashboard with charts, statistics, and insights
+- ✅ **Duplicate Detection:** Find and merge similar documents automatically
+- ✅ **Tags System:** User-defined tags for flexible organization
+- ✅ **Saved Searches:** Quick access to frequently used search queries
+- ✅ **Document Relationships:** Link related documents together
 - ✅ **UX:** Keyboard shortcuts, search highlighting, loading states, error handling
 - ✅ **Testing:** 40+ automated tests, 100% passing, comprehensive coverage
 - ✅ **Production:** Hardened infrastructure, health checks, logging, monitoring
@@ -177,6 +181,34 @@ PostgreSQL Database + Vector Store
    - Recent activity timeline
    - Customizable time periods (7, 30, 90, 365 days)
    - Interactive charts powered by Chart.js
+
+7. **Duplicate Detection** (Phase 7.2)
+   - TF-IDF similarity-based duplicate finding
+   - Configurable similarity threshold (default: 85%)
+   - Side-by-side content comparison
+   - Merge duplicates (keep one, delete others)
+   - Automatic vector store cleanup
+
+8. **Tags System** (Phase 7.3)
+   - User-defined tags with custom colors
+   - Tag documents for flexible organization
+   - Tag management (create, delete, view usage)
+   - Filter and search by tags
+   - Many-to-many document-tag relationships
+
+9. **Saved Searches** (Phase 7.4)
+   - Save frequently used search queries
+   - Store search filters with queries
+   - Quick access to saved searches
+   - Usage statistics (use count, last used)
+   - One-click search execution
+
+10. **Document Relationships** (Phase 7.5)
+    - Link related documents together
+    - Relationship types: related, prerequisite, followup, alternative, supersedes
+    - Bidirectional relationship tracking
+    - Strength scores for AI-discovered relationships
+    - Navigate between related documents
 
 ### Keyboard Shortcuts
 
@@ -248,6 +280,30 @@ Once the server is running, visit:
 - `GET /analytics?time_period={days}` - Get comprehensive analytics dashboard data
   - Returns: overview stats, time-series data, distributions, top concepts, recent activity
 
+**Duplicate Detection (Phase 7.2):**
+- `GET /duplicates?threshold={0-1}&limit={n}` - Find duplicate documents
+- `GET /duplicates/{doc_id1}/{doc_id2}` - Compare two documents
+- `POST /duplicates/merge` - Merge duplicates (body: keep_doc_id, delete_doc_ids)
+
+**Tags System (Phase 7.3):**
+- `POST /tags` - Create a new tag (body: name, color)
+- `GET /tags` - Get all user tags with document counts
+- `POST /documents/{doc_id}/tags/{tag_id}` - Add tag to document
+- `DELETE /documents/{doc_id}/tags/{tag_id}` - Remove tag from document
+- `GET /documents/{doc_id}/tags` - Get all tags for a document
+- `DELETE /tags/{tag_id}` - Delete a tag
+
+**Saved Searches (Phase 7.4):**
+- `POST /saved-searches` - Save a search (body: name, query, filters)
+- `GET /saved-searches` - Get all saved searches
+- `POST /saved-searches/{search_id}/use` - Use saved search (returns query/filters)
+- `DELETE /saved-searches/{search_id}` - Delete saved search
+
+**Document Relationships (Phase 7.5):**
+- `POST /documents/{source_id}/relationships` - Create relationship (body: target_doc_id, relationship_type, strength)
+- `GET /documents/{doc_id}/relationships` - Get all related documents
+- `DELETE /documents/{source_id}/relationships/{target_id}` - Delete relationship
+
 ---
 
 ## 🔒 Security
@@ -287,19 +343,25 @@ Once the server is running, visit:
 
 ## 🎯 Status & Roadmap
 
-### Current Status: Phase 7.1 Complete ✅ - PRODUCTION READY WITH ANALYTICS
+### Current Status: Phase 7 Complete ✅ - FEATURE-COMPLETE PRODUCTION SYSTEM
 
-**All core phases complete plus analytics!** The application is fully production-ready with:
+**All Phase 7 features complete!** The application is a feature-complete production system with:
 - ✅ Database persistence (PostgreSQL + SQLAlchemy)
 - ✅ Analytics dashboard (charts, statistics, trends)
+- ✅ Duplicate detection (find & merge similar documents)
+- ✅ Tags system (flexible user-defined organization)
+- ✅ Saved searches (quick access to frequent queries)
+- ✅ Document relationships (link related content)
 - ✅ Comprehensive testing (40+ tests, 100% passing)
 - ✅ Production hardening (security, monitoring, health checks)
 - ✅ Single-command deployment (frontend auto-served)
+- ✅ 20+ API endpoints covering all functionality
 
 ### Optional Future Enhancements
 
-- **Phase 7.2-7.5:** More advanced features (duplicate detection, document relationships, collaboration)
-- **Phase 8:** Cloud deployment (Docker, Kubernetes, scaling)
+- **Phase 8:** Cloud deployment & scaling (Docker, Kubernetes, Redis, vector database)
+- **Phase 9:** Collaboration features (share knowledge banks, team workspaces)
+- **Phase 10:** Mobile app & PWA
 
 See `FINAL_PROJECT_REPORT.md` for complete project documentation.
 
@@ -362,6 +424,6 @@ Built with:
 
 ---
 
-**Status:** ✅ **PRODUCTION READY** - Phase 7.1 Complete - Analytics Dashboard added with comprehensive insights.
+**Status:** ✅ **FEATURE-COMPLETE** - Phase 7 Complete (7.1-7.5) - Advanced features: Analytics, Duplicate Detection, Tags, Saved Searches, Document Relationships.
 
 **Last Updated:** 2025-11-13
