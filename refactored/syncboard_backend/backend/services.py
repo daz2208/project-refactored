@@ -55,7 +55,11 @@ class DocumentService:
 
         # Build metadata
         concepts = [
-            Concept(name=c["name"], relevance=c["relevance"])
+            Concept(
+                name=c["name"],
+                category=c.get("category", "concept"),
+                confidence=c.get("confidence", c.get("relevance", 0.8))
+            )
             for c in extraction.get("concepts", [])
         ]
 
@@ -136,7 +140,7 @@ class DocumentService:
         new_cluster = Cluster(
             id=0,  # Will be set by repository
             name=suggested_name,
-            document_ids=[doc_id],
+            doc_ids=[doc_id],
             primary_concepts=list(doc_concept_names)[:5],  # Top 5 concepts
             skill_level=metadata.skill_level
         )
@@ -279,7 +283,7 @@ class ClusterService:
             summaries.append({
                 "id": cluster.id,
                 "name": cluster.name,
-                "doc_count": len(cluster.document_ids),
+                "doc_count": len(cluster.doc_ids),
                 "primary_concepts": cluster.primary_concepts,
                 "skill_level": cluster.skill_level
             })

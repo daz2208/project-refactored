@@ -157,8 +157,8 @@ class KnowledgeBankRepository:
 
             # Remove from clusters
             for cluster in self.clusters.values():
-                if doc_id in cluster.document_ids:
-                    cluster.document_ids.remove(doc_id)
+                if doc_id in cluster.doc_ids:
+                    cluster.doc_ids.remove(doc_id)
 
             # Persist to disk
             await self._save_to_disk()
@@ -236,8 +236,8 @@ class KnowledgeBankRepository:
             if not cluster:
                 return False
 
-            if doc_id not in cluster.document_ids:
-                cluster.document_ids.append(doc_id)
+            if doc_id not in cluster.doc_ids:
+                cluster.doc_ids.append(doc_id)
                 await self._save_to_disk()
                 logger.debug(f"Added doc {doc_id} to cluster {cluster_id}")
 
@@ -292,7 +292,7 @@ class KnowledgeBankRepository:
             if cluster_id is not None:
                 cluster = self.clusters.get(cluster_id)
                 if cluster:
-                    allowed_doc_ids = cluster.document_ids
+                    allowed_doc_ids = cluster.doc_ids
 
             # Search vector store
             results = self.vector_store.search(
