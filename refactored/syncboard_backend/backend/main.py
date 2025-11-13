@@ -99,6 +99,10 @@ app = FastAPI(
     version="3.0.0"
 )
 
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -121,10 +125,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -871,8 +871,8 @@ async def delete_document(
     # Remove from cluster
     if meta and meta.cluster_id is not None:
         cluster = clusters.get(meta.cluster_id)
-        if cluster and doc_id in cluster.document_ids:
-            cluster.document_ids.remove(doc_id)
+        if cluster and doc_id in cluster.doc_ids:
+            cluster.doc_ids.remove(doc_id)
 
     # Save to disk
     save_storage(STORAGE_PATH, documents, metadata, clusters, users)
@@ -911,14 +911,14 @@ async def update_document_metadata(
         # Remove from old cluster
         if old_cluster_id is not None and old_cluster_id in clusters:
             old_cluster = clusters[old_cluster_id]
-            if doc_id in old_cluster.document_ids:
-                old_cluster.document_ids.remove(doc_id)
+            if doc_id in old_cluster.doc_ids:
+                old_cluster.doc_ids.remove(doc_id)
 
         # Add to new cluster
         if new_cluster_id is not None:
             if new_cluster_id not in clusters:
                 raise HTTPException(404, f"Cluster {new_cluster_id} not found")
-            clusters[new_cluster_id].document_ids.append(doc_id)
+            clusters[new_cluster_id].doc_ids.append(doc_id)
 
         meta.cluster_id = new_cluster_id
 
@@ -974,7 +974,7 @@ async def export_cluster(
 
     # Gather all documents in cluster
     cluster_docs = []
-    for doc_id in cluster.document_ids:
+    for doc_id in cluster.doc_ids:
         if doc_id in documents:
             meta = metadata.get(doc_id)
             cluster_docs.append({
