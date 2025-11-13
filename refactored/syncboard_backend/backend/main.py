@@ -53,6 +53,8 @@ from .models import (
 )
 from .vector_store import VectorStore
 from .storage import load_storage, save_storage
+from .db_storage_adapter import load_storage_from_db, save_storage_to_db
+from .database import init_db, check_database_health
 from . import ingest
 from .concept_extractor import ConceptExtractor
 from .clustering import ClusteringEngine
@@ -172,14 +174,31 @@ build_suggester = BuildSuggester()
 @app.on_event("startup")
 async def startup_event():
     global documents, metadata, clusters, users
-    documents, metadata, clusters, users = load_storage(STORAGE_PATH, vector_store)
-    logger.info(f"Loaded {len(documents)} documents, {len(clusters)} clusters, {len(users)} users")
-    
+
+    # Initialize database
+    try:
+        init_db()
+        logger.info("✅ Database initialized")
+
+        # Load from database (Phase 6.5)
+        documents, metadata, clusters, users = load_storage_from_db(vector_store)
+        logger.info(f"Loaded from database: {len(documents)} documents, {len(clusters)} clusters, {len(users)} users")
+    except Exception as e:
+        logger.warning(f"Database load failed: {e}. Falling back to file storage.")
+        # Fallback to file storage
+        documents, metadata, clusters, users = load_storage(STORAGE_PATH, vector_store)
+        logger.info(f"Loaded from file: {len(documents)} documents, {len(clusters)} clusters, {len(users)} users")
+
     # Create default test user if none exist
     if not users:
         users['test'] = hash_password('test123')
-        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
-        logger.info("Created default test user")
+        try:
+            save_storage_to_db(documents, metadata, clusters, users)
+            logger.info("Created default test user in database")
+        except Exception as e:
+            logger.warning(f"Database save failed: {e}. Saving to file.")
+            save_storage_to_db(documents, metadata, clusters, users)
+            logger.info("Created default test user in file")
 
 # Mount static files
 try:
@@ -261,7 +280,7 @@ async def create_user(request: Request, user_create: UserCreate) -> User:
         raise HTTPException(status_code=400, detail="Username already exists")
 
     users[user_create.username] = hash_password(user_create.password)
-    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+    save_storage_to_db(documents, metadata, clusters, users)
     logger.info(f"Created user: {user_create.username}")
 
     return User(username=user_create.username)
@@ -359,7 +378,7 @@ async def upload_text_content(
         metadata[doc_id].cluster_id = cluster_id
 
         # Save
-        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        save_storage_to_db(documents, metadata, clusters, users)
 
         # Structured logging with request context (Phase 5)
         logger.info(
@@ -416,7 +435,7 @@ async def upload_url(
         metadata[doc_id].cluster_id = cluster_id
         
         # Save
-        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        save_storage_to_db(documents, metadata, clusters, users)
         
         logger.info(f"User {current_user.username} uploaded URL as doc {doc_id}")
         
@@ -480,7 +499,7 @@ async def upload_file(
         metadata[doc_id].cluster_id = cluster_id
         
         # Save
-        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        save_storage_to_db(documents, metadata, clusters, users)
         
         logger.info(f"User {current_user.username} uploaded file {req.filename} as doc {doc_id}")
         
@@ -560,7 +579,7 @@ async def upload_image(
         metadata[doc_id].cluster_id = cluster_id
         
         # Save
-        save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+        save_storage_to_db(documents, metadata, clusters, users)
         
         logger.info(
             f"User {current_user.username} uploaded image {req.filename} as doc {doc_id} "
@@ -898,7 +917,7 @@ async def delete_document(
             cluster.doc_ids.remove(doc_id)
 
     # Save to disk
-    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+    save_storage_to_db(documents, metadata, clusters, users)
 
     # Structured logging with request context (Phase 5)
     logger.info(
@@ -950,7 +969,7 @@ async def update_document_metadata(
         meta.cluster_id = new_cluster_id
 
     # Save to disk
-    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+    save_storage_to_db(documents, metadata, clusters, users)
 
     logger.info(f"Updated metadata for document {doc_id}")
     return {"message": "Metadata updated", "metadata": meta.dict()}
@@ -981,7 +1000,7 @@ async def update_cluster(
             cluster.skill_level = updates['skill_level']
 
     # Save to disk
-    save_storage(STORAGE_PATH, documents, metadata, clusters, users)
+    save_storage_to_db(documents, metadata, clusters, users)
 
     logger.info(f"Updated cluster {cluster_id}: {cluster.name}")
     return {"message": "Cluster updated", "cluster": cluster.dict()}

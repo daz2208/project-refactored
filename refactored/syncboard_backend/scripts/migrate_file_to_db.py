@@ -45,21 +45,21 @@ def migrate_to_database(storage_data: dict):
         print("\n📝 Migrating users...")
         users_data = storage_data.get('users', {})
         user_count = 0
-        for username, user_data in users_data.items():
+        for username, hashed_password in users_data.items():
             # Check if user already exists
             existing = db.query(DBUser).filter_by(username=username).first()
             if existing:
                 print(f"   ⏭️  Skipping existing user: {username}")
                 continue
-            
+
             db_user = DBUser(
                 username=username,
-                hashed_password=user_data.get('hashed_password', ''),
+                hashed_password=hashed_password,
                 created_at=datetime.utcnow()
             )
             db.add(db_user)
             user_count += 1
-        
+
         db.commit()
         print(f"✅ Migrated {user_count} users")
         
