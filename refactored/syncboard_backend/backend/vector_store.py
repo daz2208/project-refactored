@@ -156,3 +156,43 @@ class VectorStore:
             snippet = text[:100] + ("..." if len(text) > 100 else "")
             results.append((doc_id, score, snippet))
         return results
+
+    def search_by_doc_id(self, doc_id: int, top_k: int = 10) -> List[Tuple[int, float]]:
+        """Find documents similar to a given document.
+
+        Args:
+            doc_id: Document ID to find similar documents for
+            top_k: Number of similar documents to return
+
+        Returns:
+            List of tuples (document_id, similarity_score) sorted by similarity
+        """
+        if self.vectorizer is None or self.doc_matrix is None:
+            return []
+
+        if doc_id not in self.docs:
+            return []
+
+        # Find the row index for this document
+        try:
+            row_idx = self.doc_ids.index(doc_id)
+        except ValueError:
+            return []
+
+        # Get the document's vector
+        doc_vec = self.doc_matrix[row_idx]
+
+        # Compute cosine similarities between this doc and all others
+        scores = cosine_similarity(self.doc_matrix, doc_vec).flatten()
+
+        # Build list of (doc_id, score) pairs, excluding the query document itself
+        results = []
+        for idx, score in enumerate(scores):
+            other_doc_id = self.doc_ids[idx]
+            if other_doc_id != doc_id:
+                results.append((other_doc_id, float(score)))
+
+        # Sort by similarity descending
+        results.sort(key=lambda x: x[1], reverse=True)
+
+        return results[:top_k]
