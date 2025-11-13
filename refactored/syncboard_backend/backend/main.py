@@ -33,6 +33,7 @@ from fastapi.security import OAuth2PasswordBearer
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 import logging
 
 from .models import (
@@ -276,9 +277,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 # =============================================================================
 
 @app.post("/users", response_model=User)
-@limiter.limit("3/minute")
-async def create_user(request: Request, user_create: UserCreate) -> User:
-    """Register new user. Rate limited to 3 attempts per minute."""
+async def create_user(user_create: UserCreate) -> User:
+    """Register new user."""
     if user_create.username in users:
         raise HTTPException(status_code=400, detail="Username already exists")
 
@@ -290,9 +290,8 @@ async def create_user(request: Request, user_create: UserCreate) -> User:
 
 
 @app.post("/token", response_model=Token)
-@limiter.limit("5/minute")
-async def login(request: Request, user_login: UserLogin) -> Token:
-    """Login and get token. Rate limited to 5 attempts per minute."""
+async def login(user_login: UserLogin) -> Token:
+    """Login and get token."""
     stored_hash = users.get(user_login.username)
     if not stored_hash or stored_hash != hash_password(user_login.password):
         raise HTTPException(
