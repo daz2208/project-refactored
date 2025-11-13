@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Bank</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: #111;
+            padding: 20px;
+            border-bottom: 2px solid #333;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            color: #00d4ff;
+            font-size: 2rem;
+        }
+        
+        .auth-section {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            max-width: 400px;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+        }
+        
+        .sidebar {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+            height: fit-content;
+        }
+        
+        .content-area {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .cluster-card {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border-left: 4px solid #00d4ff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .cluster-card:hover {
+            background: #333;
+            transform: translateX(5px);
+        }
+        
+        .upload-section {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background: #00d4ff;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #00b8e6;
+            transform: translateY(-2px);
+        }
+        
+        button.secondary {
+            background: #333;
+            color: #e0e0e0;
+        }
+        
+        button.secondary:hover {
+            background: #444;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            background: #333;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            margin-bottom: 10px;
+            font-family: inherit;
+        }
+        
+        .build-suggestion {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #00ff88;
+        }
+        
+        .feasibility-high { border-left-color: #00ff88; }
+        .feasibility-medium { border-left-color: #ffaa00; }
+        .feasibility-low { border-left-color: #ff4444; }
+        
+        .search-result {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border-left: 3px solid #666;
+        }
+        
+        .concepts-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .concept-tag {
+            background: #00d4ff22;
+            color: #00d4ff;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+        }
+        
+        .hidden { display: none; }
+        
+        .upload-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        details {
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        summary {
+            color: #00d4ff;
+            font-weight: 600;
+        }
+        
+        pre {
+            background: #111;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #333;
+            padding: 15px 20px;
+            border-radius: 6px;
+            border-left: 4px solid #00d4ff;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>💡 Knowledge Bank</h1>
+            <p>Ingest → Organize → Build</p>
+        </div>
+    </header>
+    
+    <div class="container">
+        <!-- Auth Section -->
+        <div class="auth-section" id="authSection">
+            <h2>Login / Register</h2>
+            <input type="text" id="username" placeholder="Username">
+            <input type="password" id="password" placeholder="Password">
+            <button onclick="login(event)">Login</button>
+            <button class="secondary" onclick="register(event)">Register</button>
+        </div>
+        
+        <!-- Main Content (hidden until logged in) -->
+        <div id="mainContent" class="hidden">
+            
+            <!-- Upload Section -->
+            <div class="upload-section">
+                <h2>📥 Ingest Content</h2>
+                <div class="upload-grid">
+                    <button onclick="showUploadType('text')">Text</button>
+                    <button onclick="showUploadType('url')">URL</button>
+                    <button onclick="showUploadType('file')">File</button>
+                    <button onclick="showUploadType('image')">Image</button>
+                </div>
+                
+                <div id="uploadForms">
+                    <!-- Dynamic upload forms here -->
+                </div>
+            </div>
+            
+            <div class="main-grid">
+                <!-- Sidebar: Clusters -->
+                <div class="sidebar">
+                    <h2>📁 Clusters</h2>
+                    <div id="clustersList">
+                        <!-- Clusters populated here -->
+                    </div>
+
+                    <button onclick="loadClusters()" style="width: 100%; margin-top: 20px;">
+                        Refresh Clusters
+                    </button>
+
+                    <!-- Phase 4: Export Functionality -->
+                    <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+                        <h3 style="font-size: 0.9rem; margin-bottom: 10px;">Export All</h3>
+                        <div style="display: flex; gap: 8px;">
+                            <button onclick="exportAll('json')" style="flex: 1; padding: 8px; font-size: 0.85rem;">📄 JSON</button>
+                            <button onclick="exportAll('markdown')" style="flex: 1; padding: 8px; font-size: 0.85rem;">📝 Markdown</button>
+                        </div>
+                    </div>
+
+                    <!-- Phase 4: Keyboard Shortcuts Hint -->
+                    <div style="margin-top: 15px; padding: 10px; background: #1a1a1a; border-radius: 4px; font-size: 0.75rem; color: #888;">
+                        <strong style="color: #00d4ff;">⌨️ Shortcuts:</strong><br/>
+                        <span style="font-family: monospace;">Ctrl+K</span> - Search<br/>
+                        <span style="font-family: monospace;">Esc</span> - Clear<br/>
+                        <span style="font-family: monospace;">N</span> - Scroll to top
+                    </div>
+                </div>
+                
+                <!-- Content Area -->
+                <div class="content-area">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                        <h2>🔍 Search & Explore</h2>
+                        <button onclick="whatCanIBuild(event)">What Can I Build?</button>
+                    </div>
+                    
+                    <input type="text" id="searchQuery" placeholder="Search your knowledge...">
+                    <button onclick="searchKnowledge()">Search</button>
+                    
+                    <div id="resultsArea" style="margin-top: 20px;">
+                        <!-- Search results or build suggestions here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

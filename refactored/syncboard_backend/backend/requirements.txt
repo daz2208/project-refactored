@@ -8,6 +8,16 @@ python-multipart
 python-dotenv
 slowapi
 
+# Database (Phase 6)
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Authentication
+passlib
+bcrypt
+pyjwt
+
 # AI API clients
 openai
 

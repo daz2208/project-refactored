@@ -52,16 +52,11 @@ class KnowledgeBankRepository:
     def _load_from_disk(self) -> None:
         """Load data from disk storage."""
         try:
-            docs, meta, clusters, users = load_storage(self.storage_path)
+            docs, meta, clusters, users = load_storage(self.storage_path, self.vector_store)
             self.documents = docs
             self.metadata = meta
             self.clusters = clusters
             self.users = users
-
-            # Rebuild vector store from loaded documents
-            if self.documents:
-                texts = [self.documents[doc_id] for doc_id in sorted(self.documents.keys())]
-                self.vector_store.add_documents_batch(texts)
 
             logger.info(f"Loaded {len(self.documents)} documents, {len(self.clusters)} clusters")
         except FileNotFoundError:
