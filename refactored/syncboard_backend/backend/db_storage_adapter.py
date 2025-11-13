@@ -86,7 +86,8 @@ def load_storage_from_db(
                     name=db_cluster.name,
                     doc_ids=doc_ids,
                     primary_concepts=db_cluster.primary_concepts,
-                    skill_level=db_cluster.skill_level
+                    skill_level=db_cluster.skill_level,
+                    doc_count=len(doc_ids)
                 )
 
             # Load users
