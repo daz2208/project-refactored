@@ -60,6 +60,7 @@ from .concept_extractor import ConceptExtractor
 from .clustering import ClusteringEngine
 from .image_processor import ImageProcessor
 from .build_suggester import BuildSuggester
+from .analytics_service import AnalyticsService
 
 # Try to import AI generation
 try:
@@ -1199,3 +1200,44 @@ async def health_check():
         health_data["status"] = "degraded"
 
     return health_data
+
+
+# =============================================================================
+# Analytics Dashboard (Phase 7.1)
+# =============================================================================
+
+@app.get("/analytics")
+async def get_analytics(
+    time_period: int = 30,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get comprehensive analytics for the user's knowledge bank.
+
+    Args:
+        time_period: Number of days for time-series data (default: 30)
+
+    Returns:
+        Complete analytics including:
+        - Overview statistics (total docs, clusters, concepts)
+        - Time-series data (document growth over time)
+        - Distribution metrics (clusters, skill levels, source types)
+        - Top concepts
+        - Recent activity
+    """
+    from .database import get_db_context
+
+    try:
+        with get_db_context() as db:
+            analytics = AnalyticsService(db)
+            data = analytics.get_complete_analytics(
+                username=current_user.username,
+                time_period_days=time_period
+            )
+            return data
+    except Exception as e:
+        logger.error(f"Analytics failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate analytics: {str(e)}"
+        )

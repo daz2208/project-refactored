@@ -762,3 +762,324 @@ document.addEventListener('DOMContentLoaded', () => {
     // Enable keyboard shortcuts (Phase 4)
     setupKeyboardShortcuts();
 });
+
+// =============================================================================
+// Analytics Dashboard (Phase 7.1)
+// =============================================================================
+
+let analyticsCharts = {};
+
+// Tab switching
+function showTab(tabName) {
+    // Update tab buttons
+    document.getElementById('searchTab').classList.remove('active');
+    document.getElementById('analyticsTab').classList.remove('active');
+
+    // Update content visibility
+    document.getElementById('searchContent').classList.add('hidden');
+    document.getElementById('analyticsContent').classList.add('hidden');
+
+    if (tabName === 'search') {
+        document.getElementById('searchTab').classList.add('active');
+        document.getElementById('searchContent').classList.remove('hidden');
+    } else if (tabName === 'analytics') {
+        document.getElementById('analyticsTab').classList.add('active');
+        document.getElementById('analyticsContent').classList.remove('hidden');
+        // Load analytics when tab is shown
+        loadAnalytics();
+    }
+}
+
+// Load analytics data
+async function loadAnalytics() {
+    const timePeriod = document.getElementById('timePeriodSelect').value;
+
+    try {
+        const response = await fetch(`http://localhost:8000/analytics?time_period=${timePeriod}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to load analytics');
+        }
+
+        const data = await response.json();
+
+        // Render all analytics sections
+        renderOverviewStats(data.overview);
+        renderTimeSeriesChart(data.time_series);
+        renderClusterChart(data.cluster_distribution);
+        renderSkillLevelChart(data.skill_level_distribution);
+        renderSourceTypeChart(data.source_type_distribution);
+        renderTopConcepts(data.top_concepts);
+        renderRecentActivity(data.recent_activity);
+
+    } catch (error) {
+        console.error('Analytics error:', error);
+        alert('Failed to load analytics: ' + error.message);
+    }
+}
+
+// Render overview statistics
+function renderOverviewStats(overview) {
+    const container = document.getElementById('overviewStats');
+
+    container.innerHTML = `
+        <div class="stat-card">
+            <h4>Total Documents</h4>
+            <div class="stat-value">${overview.total_documents}</div>
+            <div class="stat-change">+${overview.documents_today} today</div>
+        </div>
+        <div class="stat-card">
+            <h4>Total Clusters</h4>
+            <div class="stat-value">${overview.total_clusters}</div>
+        </div>
+        <div class="stat-card">
+            <h4>Total Concepts</h4>
+            <div class="stat-value">${overview.total_concepts}</div>
+        </div>
+        <div class="stat-card">
+            <h4>This Week</h4>
+            <div class="stat-value">${overview.documents_this_week}</div>
+            <div class="stat-change">Documents added</div>
+        </div>
+        <div class="stat-card">
+            <h4>This Month</h4>
+            <div class="stat-value">${overview.documents_this_month}</div>
+            <div class="stat-change">Documents added</div>
+        </div>
+    `;
+}
+
+// Render time series chart
+function renderTimeSeriesChart(timeSeriesData) {
+    const ctx = document.getElementById('timeSeriesChart');
+
+    // Destroy existing chart if it exists
+    if (analyticsCharts.timeSeries) {
+        analyticsCharts.timeSeries.destroy();
+    }
+
+    analyticsCharts.timeSeries = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: timeSeriesData.labels,
+            datasets: [{
+                label: 'Documents Added',
+                data: timeSeriesData.data,
+                borderColor: '#00d4ff',
+                backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: '#e0e0e0'
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888' },
+                    grid: { color: '#333' }
+                },
+                y: {
+                    ticks: { color: '#888' },
+                    grid: { color: '#333' },
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Set canvas height
+    ctx.style.height = '300px';
+}
+
+// Render cluster distribution chart
+function renderClusterChart(clusterData) {
+    const ctx = document.getElementById('clusterChart');
+
+    if (analyticsCharts.cluster) {
+        analyticsCharts.cluster.destroy();
+    }
+
+    analyticsCharts.cluster = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: clusterData.labels,
+            datasets: [{
+                label: 'Documents',
+                data: clusterData.data,
+                backgroundColor: '#00d4ff',
+                borderColor: '#00a8cc',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: { color: '#e0e0e0' }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888' },
+                    grid: { color: '#333' }
+                },
+                y: {
+                    ticks: { color: '#888' },
+                    grid: { color: '#333' },
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    ctx.style.height = '250px';
+}
+
+// Render skill level distribution chart
+function renderSkillLevelChart(skillLevelData) {
+    const ctx = document.getElementById('skillLevelChart');
+
+    if (analyticsCharts.skillLevel) {
+        analyticsCharts.skillLevel.destroy();
+    }
+
+    analyticsCharts.skillLevel = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: skillLevelData.labels,
+            datasets: [{
+                data: skillLevelData.data,
+                backgroundColor: [
+                    '#00d4ff',
+                    '#4ade80',
+                    '#f59e0b',
+                    '#ef4444'
+                ],
+                borderWidth: 2,
+                borderColor: '#1a1a1a'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#e0e0e0' }
+                }
+            }
+        }
+    });
+
+    ctx.style.height = '250px';
+}
+
+// Render source type distribution chart
+function renderSourceTypeChart(sourceTypeData) {
+    const ctx = document.getElementById('sourceTypeChart');
+
+    if (analyticsCharts.sourceType) {
+        analyticsCharts.sourceType.destroy();
+    }
+
+    analyticsCharts.sourceType = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: sourceTypeData.labels,
+            datasets: [{
+                data: sourceTypeData.data,
+                backgroundColor: [
+                    '#00d4ff',
+                    '#4ade80',
+                    '#f59e0b',
+                    '#ef4444',
+                    '#8b5cf6'
+                ],
+                borderWidth: 2,
+                borderColor: '#1a1a1a'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#e0e0e0' }
+                }
+            }
+        }
+    });
+
+    ctx.style.height = '250px';
+}
+
+// Render top concepts list
+function renderTopConcepts(topConcepts) {
+    const container = document.getElementById('topConceptsList');
+
+    if (topConcepts.length === 0) {
+        container.innerHTML = '<p style="color: #888; text-align: center; padding: 20px;">No concepts found</p>';
+        return;
+    }
+
+    container.innerHTML = topConcepts.map(concept => `
+        <div class="concept-item">
+            <span class="concept-text">${concept.concept}</span>
+            <span class="concept-count">${concept.count}</span>
+        </div>
+    `).join('');
+}
+
+// Render recent activity
+function renderRecentActivity(recentActivity) {
+    const container = document.getElementById('recentActivity');
+
+    if (recentActivity.length === 0) {
+        container.innerHTML = '<p style="color: #888; text-align: center; padding: 20px;">No recent activity</p>';
+        return;
+    }
+
+    container.innerHTML = recentActivity.map(activity => {
+        const date = new Date(activity.created_at);
+        const timeAgo = getTimeAgo(date);
+
+        return `
+            <div class="activity-item">
+                <div class="activity-info">
+                    <div class="activity-type">${activity.source_type || 'Document'}</div>
+                    <div class="activity-details">
+                        Skill Level: ${activity.skill_level || 'Unknown'} •
+                        Cluster ID: ${activity.cluster_id !== null ? activity.cluster_id : 'None'}
+                    </div>
+                </div>
+                <div class="activity-time">${timeAgo}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Helper function to format time ago
+function getTimeAgo(date) {
+    const now = new Date();
+    const seconds = Math.floor((now - date) / 1000);
+
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+    return date.toLocaleDateString();
+}
