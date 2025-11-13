@@ -205,14 +205,6 @@ async def startup_event():
             save_storage_to_db(documents, metadata, clusters, users)
             logger.info("Created default test user in file")
 
-# Mount static files
-try:
-    static_path = Path(__file__).parent / 'static'
-    if static_path.exists():
-        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
-except Exception as e:
-    logger.warning(f"Could not mount static files: {e}")
-
 # =============================================================================
 # Authentication Helpers
 # =============================================================================
@@ -1591,3 +1583,15 @@ async def delete_document_relationship(
     except Exception as e:
         logger.error(f"Delete relationship failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================================================
+# Mount static files LAST (after all API routes)
+# =============================================================================
+# Static files mounted at "/" will catch all routes, so mount AFTER API endpoints
+try:
+    static_path = Path(__file__).parent / 'static'
+    if static_path.exists():
+        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
+        logger.info("✅ Static files mounted at /")
+except Exception as e:
+    logger.warning(f"Could not mount static files: {e}")
