@@ -8,6 +8,7 @@ Boards removed - all content organized by AI-discovered concepts.
 import os
 import asyncio
 import base64
+import uuid
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 
@@ -24,7 +25,7 @@ for env_path in env_paths:
         load_dotenv(env_path)
         break
 
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -125,6 +126,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request ID middleware (Phase 5)
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """
+    Add unique request ID to each request for tracing.
+    Enables debugging by tracking requests through logs.
+    """
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    # Process request
+    response = await call_next(request)
+
+    # Add request ID to response headers
+    response.headers["X-Request-ID"] = request_id
+
+    return response
 
 # OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -303,20 +322,21 @@ async def find_or_create_cluster(
 @app.post("/upload_text")
 async def upload_text_content(
     req: TextUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
     """Upload plain text content."""
     if not req.content or not req.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
-    
+
     async with storage_lock:
         # Extract concepts
         extraction = await concept_extractor.extract(req.content, "text")
-        
+
         # Add to vector store
         doc_id = vector_store.add_document(req.content)
         documents[doc_id] = req.content
-        
+
         # Create metadata
         meta = DocumentMetadata(
             doc_id=doc_id,
@@ -329,7 +349,7 @@ async def upload_text_content(
             content_length=len(req.content)
         )
         metadata[doc_id] = meta
-        
+
         # Find or create cluster
         cluster_id = await find_or_create_cluster(
             doc_id=doc_id,
@@ -337,12 +357,13 @@ async def upload_text_content(
             concepts=extraction.get("concepts", [])
         )
         metadata[doc_id].cluster_id = cluster_id
-        
+
         # Save
         save_storage(STORAGE_PATH, documents, metadata, clusters, users)
-        
+
+        # Structured logging with request context (Phase 5)
         logger.info(
-            f"User {current_user.username} uploaded text as doc {doc_id} "
+            f"[{request.state.request_id}] User {current_user.username} uploaded text as doc {doc_id} "
             f"(cluster: {cluster_id}, concepts: {len(extraction.get('concepts', []))})"
         )
         
@@ -855,6 +876,7 @@ async def get_document(
 @app.delete("/documents/{doc_id}")
 async def delete_document(
     doc_id: int,
+    request: Request,
     user: User = Depends(get_current_user)
 ):
     """Delete a document from the knowledge bank."""
@@ -869,6 +891,7 @@ async def delete_document(
     # Note: Current VectorStore doesn't have remove, but we'll handle this gracefully
 
     # Remove from cluster
+    cluster_id = meta.cluster_id if meta else None
     if meta and meta.cluster_id is not None:
         cluster = clusters.get(meta.cluster_id)
         if cluster and doc_id in cluster.doc_ids:
@@ -877,7 +900,11 @@ async def delete_document(
     # Save to disk
     save_storage(STORAGE_PATH, documents, metadata, clusters, users)
 
-    logger.info(f"Deleted document {doc_id}")
+    # Structured logging with request context (Phase 5)
+    logger.info(
+        f"[{request.state.request_id}] User {user.username} deleted document {doc_id} "
+        f"(cluster: {cluster_id}, source: {meta.source_type if meta else 'unknown'})"
+    )
     return {"message": f"Document {doc_id} deleted successfully"}
 
 
@@ -1072,15 +1099,72 @@ async def export_all(
 
 
 # =============================================================================
-# Health Check
+# Health Check (Enhanced - Phase 5)
 # =============================================================================
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {
+    """
+    Enhanced health check endpoint.
+
+    Returns system status and dependency health for monitoring.
+    Includes disk space, vector store size, and data integrity checks.
+    """
+    import shutil
+
+    # Basic statistics
+    health_data = {
         "status": "healthy",
-        "documents": len(documents),
-        "clusters": len(clusters),
-        "users": len(users)
+        "timestamp": datetime.utcnow().isoformat(),
+        "statistics": {
+            "documents": len(documents),
+            "clusters": len(clusters),
+            "users": len(users),
+            "vector_store_size": len(vector_store.docs) if hasattr(vector_store, 'docs') else 0
+        },
+        "dependencies": {}
     }
+
+    # Check disk space
+    try:
+        disk_usage = shutil.disk_usage("/")
+        disk_free_gb = disk_usage.free / (1024 ** 3)
+        health_data["dependencies"]["disk_space_gb"] = round(disk_free_gb, 2)
+        health_data["dependencies"]["disk_healthy"] = disk_free_gb > 1.0  # At least 1GB free
+    except Exception as e:
+        health_data["dependencies"]["disk_space_gb"] = "error"
+        health_data["dependencies"]["disk_healthy"] = False
+        logger.error(f"Failed to check disk space: {e}")
+
+    # Check storage file
+    try:
+        storage_path = Path(STORAGE_PATH)
+        if storage_path.exists():
+            file_size_mb = storage_path.stat().st_size / (1024 ** 2)
+            health_data["dependencies"]["storage_file_mb"] = round(file_size_mb, 2)
+            health_data["dependencies"]["storage_file_exists"] = True
+        else:
+            health_data["dependencies"]["storage_file_exists"] = False
+    except Exception as e:
+        health_data["dependencies"]["storage_file_exists"] = "error"
+        logger.error(f"Failed to check storage file: {e}")
+
+    # Check OpenAI API (optional - only if we want to be comprehensive)
+    try:
+        # Don't actually call API, just check if key is set
+        openai_key = os.environ.get('OPENAI_API_KEY')
+        health_data["dependencies"]["openai_configured"] = bool(openai_key and openai_key.startswith('sk-'))
+    except Exception:
+        health_data["dependencies"]["openai_configured"] = False
+
+    # Overall health status
+    all_healthy = all([
+        health_data["dependencies"].get("disk_healthy", False),
+        health_data["dependencies"].get("storage_file_exists", False),
+        health_data["dependencies"].get("openai_configured", False)
+    ])
+
+    if not all_healthy:
+        health_data["status"] = "degraded"
+
+    return health_data
