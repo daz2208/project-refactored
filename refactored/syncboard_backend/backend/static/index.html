@@ -198,6 +198,178 @@
             from { transform: translateX(400px); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
         }
+
+        /* Analytics Dashboard Styles (Phase 7.1) */
+        .tab-button {
+            background: #2a2a2a;
+            border: none;
+            color: #888;
+            padding: 12px 24px;
+            cursor: pointer;
+            border-radius: 8px 8px 0 0;
+            font-size: 0.95rem;
+            transition: all 0.3s;
+        }
+
+        .tab-button:hover {
+            background: #333;
+            color: #e0e0e0;
+        }
+
+        .tab-button.active {
+            background: #00d4ff;
+            color: #0a0a0a;
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: block;
+        }
+
+        .tab-content.hidden {
+            display: none;
+        }
+
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #00d4ff;
+        }
+
+        .stat-card h4 {
+            color: #888;
+            font-size: 0.85rem;
+            font-weight: normal;
+            margin-bottom: 8px;
+        }
+
+        .stat-card .stat-value {
+            color: #00d4ff;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .stat-card .stat-change {
+            color: #4ade80;
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
+
+        .analytics-charts {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .chart-container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .chart-container h3 {
+            color: #00d4ff;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+        }
+
+        .chart-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .concepts-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .concept-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .concept-item:hover {
+            background: #333;
+        }
+
+        .concept-text {
+            color: #e0e0e0;
+            flex: 1;
+        }
+
+        .concept-count {
+            color: #00d4ff;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .analytics-section {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .analytics-section h3 {
+            color: #00d4ff;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+        }
+
+        .activity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            background: #1a1a1a;
+            padding: 12px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .activity-item:hover {
+            background: #333;
+        }
+
+        .activity-info {
+            flex: 1;
+        }
+
+        .activity-type {
+            color: #00d4ff;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .activity-details {
+            color: #888;
+            font-size: 0.85rem;
+            margin-top: 4px;
+        }
+
+        .activity-time {
+            color: #666;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 <body>
@@ -268,22 +440,90 @@
                 
                 <!-- Content Area -->
                 <div class="content-area">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                        <h2>🔍 Search & Explore</h2>
-                        <button onclick="whatCanIBuild(event)">What Can I Build?</button>
+                    <!-- Tab Navigation -->
+                    <div style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #333;">
+                        <button id="searchTab" class="tab-button active" onclick="showTab('search')">🔍 Search & Explore</button>
+                        <button id="analyticsTab" class="tab-button" onclick="showTab('analytics')">📊 Analytics Dashboard</button>
                     </div>
-                    
-                    <input type="text" id="searchQuery" placeholder="Search your knowledge...">
-                    <button onclick="searchKnowledge()">Search</button>
-                    
-                    <div id="resultsArea" style="margin-top: 20px;">
-                        <!-- Search results or build suggestions here -->
+
+                    <!-- Search Tab Content -->
+                    <div id="searchContent" class="tab-content">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                            <h2>🔍 Search & Explore</h2>
+                            <button onclick="whatCanIBuild(event)">What Can I Build?</button>
+                        </div>
+
+                        <input type="text" id="searchQuery" placeholder="Search your knowledge...">
+                        <button onclick="searchKnowledge()">Search</button>
+
+                        <div id="resultsArea" style="margin-top: 20px;">
+                            <!-- Search results or build suggestions here -->
+                        </div>
+                    </div>
+
+                    <!-- Analytics Tab Content (Phase 7.1) -->
+                    <div id="analyticsContent" class="tab-content hidden">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h2>📊 Analytics Dashboard</h2>
+                            <select id="timePeriodSelect" onchange="loadAnalytics()">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="365">Last year</option>
+                            </select>
+                        </div>
+
+                        <!-- Overview Stats -->
+                        <div id="overviewStats" class="analytics-grid">
+                            <!-- Stats cards populated here -->
+                        </div>
+
+                        <!-- Charts -->
+                        <div class="analytics-charts">
+                            <div class="chart-container">
+                                <h3>📈 Document Growth</h3>
+                                <canvas id="timeSeriesChart"></canvas>
+                            </div>
+
+                            <div class="chart-row">
+                                <div class="chart-container">
+                                    <h3>📁 Documents by Cluster</h3>
+                                    <canvas id="clusterChart"></canvas>
+                                </div>
+                                <div class="chart-container">
+                                    <h3>🎯 Skill Level Distribution</h3>
+                                    <canvas id="skillLevelChart"></canvas>
+                                </div>
+                            </div>
+
+                            <div class="chart-row">
+                                <div class="chart-container">
+                                    <h3>📑 Source Type Distribution</h3>
+                                    <canvas id="sourceTypeChart"></canvas>
+                                </div>
+                                <div class="chart-container">
+                                    <h3>🏷️ Top Concepts</h3>
+                                    <div id="topConceptsList" class="concepts-list">
+                                        <!-- Top concepts list -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Recent Activity -->
+                        <div class="analytics-section">
+                            <h3>🕒 Recent Activity</h3>
+                            <div id="recentActivity" class="activity-list">
+                                <!-- Recent activity items -->
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
