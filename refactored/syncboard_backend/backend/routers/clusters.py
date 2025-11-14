@@ -179,9 +179,9 @@ async def export_cluster(
             meta = doc['metadata']
             md_content += f"## Document {doc['doc_id']}\n\n"
             if meta:
-                md_content += f"**Source:** {meta['source_type']}\n"
-                md_content += f"**Topic:** {meta['primary_topic']}\n"
-                md_content += f"**Concepts:** {', '.join([c['name'] for c in meta['concepts']])}\n\n"
+                md_content += f"**Source:** {meta.get('source_type', 'unknown')}\n"
+                md_content += f"**Topic:** {meta.get('primary_topic', 'N/A')}\n"
+                md_content += f"**Concepts:** {', '.join([c['name'] for c in meta.get('concepts', [])])}\n\n"
             md_content += f"{doc['content']}\n\n"
             md_content += "---\n\n"
         
@@ -252,7 +252,7 @@ async def export_all(
                 meta = doc['metadata']
                 md_content += f"## Document {doc['doc_id']}\n\n"
                 if meta:
-                    md_content += f"**Topic:** {meta['primary_topic']}\n"
+                    md_content += f"**Topic:** {meta.get('primary_topic', 'N/A')}\n"
                 md_content += f"{doc['content'][:500]}...\n\n"
                 md_content += "---\n\n"
         
