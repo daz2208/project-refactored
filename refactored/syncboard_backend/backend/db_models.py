@@ -136,3 +136,92 @@ class DBVectorDocument(Base):
 
     def __repr__(self):
         return f"<DBVectorDocument(doc_id={self.doc_id}, content_len={len(self.content) if self.content else 0})>"
+
+
+# =============================================================================
+# Phase 7.3-7.5: Advanced Features
+# =============================================================================
+
+class DBTag(Base):
+    """User-defined tags for documents (Phase 7.3)."""
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, index=True)
+    owner_username = Column(String(50), ForeignKey("users.username"), nullable=False, index=True)
+    color = Column(String(7), nullable=True)  # Hex color code (e.g., "#00d4ff")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Unique constraint: one tag name per user
+    __table_args__ = (
+        Index('idx_tag_owner_name', 'owner_username', 'name', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<DBTag(id={self.id}, name='{self.name}', owner='{self.owner_username}')>"
+
+
+class DBDocumentTag(Base):
+    """Many-to-many relationship between documents and tags (Phase 7.3)."""
+    __tablename__ = "document_tags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Unique constraint: each document-tag pair only once
+    __table_args__ = (
+        Index('idx_doctag_unique', 'document_id', 'tag_id', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<DBDocumentTag(doc={self.document_id}, tag={self.tag_id})>"
+
+
+class DBSavedSearch(Base):
+    """Saved search queries for quick access (Phase 7.4)."""
+    __tablename__ = "saved_searches"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_username = Column(String(50), ForeignKey("users.username"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    query = Column(String(1000), nullable=False)
+
+    # Search filters (stored as JSON)
+    filters = Column(JSON, nullable=True)  # {cluster_id, source_type, skill_level, date_from, date_to}
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+    use_count = Column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        Index('idx_saved_search_owner', 'owner_username'),
+    )
+
+    def __repr__(self):
+        return f"<DBSavedSearch(id={self.id}, name='{self.name}', owner='{self.owner_username}')>"
+
+
+class DBDocumentRelationship(Base):
+    """Links between related documents (Phase 7.5)."""
+    __tablename__ = "document_relationships"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_doc_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    target_doc_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+
+    relationship_type = Column(String(50), nullable=False, default="related")
+    # Types: "related", "prerequisite", "followup", "alternative", "supersedes"
+
+    strength = Column(Float, nullable=True)  # 0.0-1.0, for AI-discovered relationships
+    created_by_username = Column(String(50), nullable=True)  # Null if AI-generated
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Prevent duplicate relationships
+    __table_args__ = (
+        Index('idx_doc_rel_unique', 'source_doc_id', 'target_doc_id', 'relationship_type', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<DBDocumentRelationship(source={self.source_doc_id}, target={self.target_doc_id}, type='{self.relationship_type}')>"
