@@ -340,12 +340,13 @@ async def find_or_create_cluster(
 # =============================================================================
 
 @app.post("/upload_text")
+@limiter.limit("10/minute")
 async def upload_text_content(
     req: TextUpload,
     request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload plain text content."""
+    """Upload plain text content. Rate limited to 10 uploads per minute."""
     if not req.content or not req.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
@@ -395,11 +396,13 @@ async def upload_text_content(
 
 
 @app.post("/upload")
+@limiter.limit("5/minute")
 async def upload_url(
     doc: DocumentUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload document via URL (YouTube, web article, etc)."""
+    """Upload document via URL (YouTube, web article, etc). Rate limited to 5 uploads per minute."""
     try:
         document_text = ingest.download_url(str(doc.url))
     except Exception as exc:
@@ -448,11 +451,13 @@ async def upload_url(
 
 
 @app.post("/upload_file")
+@limiter.limit("5/minute")
 async def upload_file(
     req: FileBytesUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload file (PDF, audio, etc) as base64."""
+    """Upload file (PDF, audio, etc) as base64. Rate limited to 5 uploads per minute."""
     try:
         file_bytes = base64.b64decode(req.content)
 
@@ -512,11 +517,13 @@ async def upload_file(
 
 
 @app.post("/upload_image")
+@limiter.limit("10/minute")
 async def upload_image(
     req: ImageUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload and process image with OCR."""
+    """Upload and process image with OCR. Rate limited to 10 uploads per minute."""
     try:
         image_bytes = base64.b64decode(req.content)
 
@@ -626,6 +633,7 @@ async def get_clusters(
 # =============================================================================
 
 @app.get("/search_full")
+@limiter.limit("30/minute")
 async def search_full_content(
     q: str,
     top_k: int = 10,
@@ -635,10 +643,11 @@ async def search_full_content(
     skill_level: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    request: Request = None,
     current_user: User = Depends(get_current_user)
 ):
     """
-    Search documents with optional filters (Phase 4).
+    Search documents with optional filters (Phase 4). Rate limited to 30 searches per minute.
 
     Filters:
     - source_type: Filter by source (text, url, pdf, etc.)
@@ -777,11 +786,13 @@ async def search_full_content(
 # =============================================================================
 
 @app.post("/what_can_i_build")
+@limiter.limit("3/minute")
 async def what_can_i_build(
     req: BuildSuggestionRequest,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Analyze knowledge bank and suggest viable projects."""
+    """Analyze knowledge bank and suggest viable projects. Rate limited to 3 requests per minute."""
     max_suggestions = req.max_suggestions
     if max_suggestions < 1 or max_suggestions > 10:
         max_suggestions = 5
@@ -834,11 +845,13 @@ async def what_can_i_build(
 # =============================================================================
 
 @app.post("/generate")
+@limiter.limit("5/minute")
 async def generate_content(
     req: GenerationRequest,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Generate AI content with RAG."""
+    """Generate AI content with RAG. Rate limited to 5 requests per minute."""
     if not REAL_AI_AVAILABLE:
         return {"response": "AI generation not available - API keys not configured"}
     
