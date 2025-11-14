@@ -44,11 +44,11 @@ async def generate_with_rag(
         Generated text response
     """
     # Get relevant documents using semantic search
-    search_results = vector_store.search(prompt, top_k=top_k)
+    search_results = vector_store.search(prompt, top_k=top_k, allowed_doc_ids=allowed_doc_ids)
 
     # Filter to only user's documents
     relevant_docs = []
-    for doc_id, score in search_results:
+    for doc_id, score, snippet in search_results:  # FIX: Unpack all 3 values
         if doc_id in allowed_doc_ids and doc_id in documents:
             relevant_docs.append({
                 "content": documents[doc_id],

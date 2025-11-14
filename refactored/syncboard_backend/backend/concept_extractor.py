@@ -6,9 +6,7 @@ Analyzes content and extracts topics, concepts, skills, and metadata.
 import os
 import json
 import logging
-import hashlib
 from typing import Dict, Optional
-from functools import lru_cache
 
 from .llm_providers import LLMProvider, OpenAIProvider
 
@@ -34,30 +32,6 @@ class ConceptExtractor:
         else:
             self.provider = llm_provider
 
-    def _compute_content_hash(self, content: str, source_type: str) -> str:
-        """Compute hash of content for caching."""
-        # Use first 2000 chars (same as sample size) for consistency
-        sample = content[:2000] if len(content) > 2000 else content
-        key = f"{source_type}:{sample}"
-        return hashlib.sha256(key.encode()).hexdigest()
-
-    @lru_cache(maxsize=1000)
-    def _get_cached_result(self, content_hash: str) -> str:
-        """
-        Cache wrapper for concept extraction results.
-
-        Returns JSON string of cached result, or empty string if not cached.
-        This method is decorated with lru_cache to enable result caching.
-        """
-        # This is a cache key holder - actual caching happens at decorator level
-        return ""
-
-    def _cache_result(self, content_hash: str, result: Dict) -> None:
-        """Store result in cache."""
-        # Store serialized result in cache
-        self._get_cached_result(content_hash)
-        # The actual cache storage happens through the lru_cache decorator
-
     async def extract(self, content: str, source_type: str) -> Dict:
         """
         Extract concepts from content.
@@ -77,10 +51,8 @@ class ConceptExtractor:
                 "suggested_cluster": "Docker & Deployment"
             }
         """
-
-        # Check cache first
-        content_hash = self._compute_content_hash(content, source_type)
-        logger.debug(f"Content hash: {content_hash}")
+        # NOTE: Caching removed - was broken (lru_cache on instance methods doesn't work)
+        # TODO: Implement proper caching with Redis or similar if needed
 
         try:
             # Delegate to LLM provider
