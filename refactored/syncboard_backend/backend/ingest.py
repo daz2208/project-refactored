@@ -7,11 +7,14 @@ This module provides actual AI-powered content processing:
 - PDF text extraction
 - Audio file transcription
 - Web article extraction
+- ✨ Jupyter notebook extraction (.ipynb) - Phase 1
+- ✨ Source code file processing (Python, JavaScript, etc.) - Phase 1
 
 ✅ FIXED: Added audio compression to handle files over Whisper's 25MB limit
+✨ NEW: Phase 1 expansion adds support for 40+ programming languages and Jupyter notebooks
 
 Dependencies:
-    pip install yt-dlp openai anthropic pypdf beautifulsoup4 requests
+    pip install yt-dlp openai anthropic pypdf beautifulsoup4 requests python-docx
 """
 
 import os
@@ -482,31 +485,98 @@ CONTENT:
         raise Exception(f"Failed to extract web content: {e}")
 
 
+# =============================================================================
+# Code File Extensions Map (Phase 1 Expansion)
+# =============================================================================
+
+CODE_EXTENSIONS = {
+    # Programming languages
+    '.py': 'Python',
+    '.js': 'JavaScript',
+    '.ts': 'TypeScript',
+    '.jsx': 'JavaScript React',
+    '.tsx': 'TypeScript React',
+    '.java': 'Java',
+    '.cpp': 'C++',
+    '.cc': 'C++',
+    '.cxx': 'C++',
+    '.c': 'C',
+    '.h': 'C/C++ Header',
+    '.hpp': 'C++ Header',
+    '.go': 'Go',
+    '.rs': 'Rust',
+    '.rb': 'Ruby',
+    '.php': 'PHP',
+    '.swift': 'Swift',
+    '.kt': 'Kotlin',
+    '.scala': 'Scala',
+    '.r': 'R',
+    '.m': 'MATLAB',
+
+    # Web development
+    '.html': 'HTML',
+    '.css': 'CSS',
+    '.scss': 'SCSS',
+    '.sass': 'Sass',
+    '.vue': 'Vue',
+
+    # Shell & scripts
+    '.sh': 'Shell Script',
+    '.bash': 'Bash Script',
+    '.zsh': 'Zsh Script',
+    '.fish': 'Fish Script',
+    '.ps1': 'PowerShell',
+
+    # Data & config
+    '.sql': 'SQL',
+    '.yaml': 'YAML',
+    '.yml': 'YAML',
+    '.toml': 'TOML',
+    '.xml': 'XML',
+    '.ini': 'INI Config',
+    '.conf': 'Config File',
+
+    # Documentation
+    '.rst': 'reStructuredText',
+    '.tex': 'LaTeX',
+}
+
+
 def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
     """
     Process an uploaded file and extract text.
-    
+
     Supports:
     - PDF files (text extraction)
     - Text files (.txt, .md)
     - Audio files (.mp3, .wav, .m4a) - transcription via Whisper
     - Word documents (.docx)
-    
+    - Jupyter notebooks (.ipynb) ✨ NEW
+    - Code files (Python, JavaScript, etc.) ✨ NEW
+
     ✅ Audio files now compressed if over 25MB limit.
-    
+
     Args:
         filename: Original filename
         content_bytes: File content as bytes
-        
+
     Returns:
         Extracted text content
     """
     file_ext = Path(filename).suffix.lower()
-    
+
     logger.info(f"Processing uploaded file: {filename} ({len(content_bytes)} bytes)")
-    
+
+    # Jupyter notebooks (Phase 1)
+    if file_ext == '.ipynb':
+        return extract_jupyter_notebook(content_bytes, filename)
+
+    # Code files (Phase 1)
+    elif file_ext in CODE_EXTENSIONS:
+        return extract_code_file(content_bytes, filename)
+
     # Text files
-    if file_ext in ['.txt', '.md', '.csv', '.json']:
+    elif file_ext in ['.txt', '.md', '.csv', '.json']:
         try:
             return content_bytes.decode('utf-8')
         except UnicodeDecodeError:
@@ -514,19 +584,19 @@ def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
                 return content_bytes.decode('latin-1')
             except:
                 raise Exception("Failed to decode text file")
-    
+
     # PDF files
     elif file_ext == '.pdf':
         return extract_pdf_text(content_bytes)
-    
+
     # Audio files
     elif file_ext in ['.mp3', '.wav', '.m4a', '.ogg', '.flac']:
         return transcribe_audio_file(content_bytes, filename)
-    
+
     # Word documents
     elif file_ext == '.docx':
         return extract_docx_text(content_bytes)
-    
+
     else:
         raise Exception(f"Unsupported file type: {file_ext}")
 
@@ -629,20 +699,209 @@ def extract_docx_text(content_bytes: bytes) -> str:
         import io
     except ImportError:
         raise Exception("Install python-docx: pip install python-docx")
-    
+
     try:
         doc_file = io.BytesIO(content_bytes)
         doc = Document(doc_file)
-        
+
         text_parts = []
         for para in doc.paragraphs:
             if para.text.strip():
                 text_parts.append(para.text)
-        
+
         result = "WORD DOCUMENT\n\n" + "\n\n".join(text_parts)
-        
+
         logger.info(f"Extracted text from Word document: {len(text_parts)} paragraphs")
         return result
-        
+
     except Exception as e:
         raise Exception(f"Word document extraction failed: {e}")
+
+
+# =============================================================================
+# Phase 1 Expansion: Jupyter Notebooks & Code Files
+# =============================================================================
+
+def extract_jupyter_notebook(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract content from Jupyter notebook (.ipynb).
+
+    Extracts:
+    - Code cells with syntax highlighting hints
+    - Markdown cells
+    - Cell outputs (text)
+    - Notebook metadata
+
+    Args:
+        content_bytes: Notebook file content
+        filename: Original filename
+
+    Returns:
+        Formatted text with all notebook content
+    """
+    import json
+
+    try:
+        # Parse notebook JSON
+        notebook = json.loads(content_bytes.decode('utf-8'))
+    except json.JSONDecodeError as e:
+        raise Exception(f"Invalid Jupyter notebook format: {e}")
+    except UnicodeDecodeError as e:
+        raise Exception(f"Failed to decode notebook: {e}")
+
+    # Extract metadata
+    metadata = notebook.get('metadata', {})
+    kernel_info = metadata.get('kernelspec', {})
+    language = kernel_info.get('language', 'unknown')
+    kernel_name = kernel_info.get('display_name', 'Unknown')
+
+    text_parts = [
+        f"JUPYTER NOTEBOOK: {filename}",
+        f"Kernel: {kernel_name}",
+        f"Language: {language}",
+        ""
+    ]
+
+    # Extract cells
+    cells = notebook.get('cells', [])
+    code_cell_count = 0
+    markdown_cell_count = 0
+
+    for i, cell in enumerate(cells, 1):
+        cell_type = cell.get('cell_type', 'unknown')
+        source = cell.get('source', [])
+
+        # Handle source as list or string
+        if isinstance(source, list):
+            source_text = ''.join(source)
+        else:
+            source_text = source
+
+        if not source_text.strip():
+            continue  # Skip empty cells
+
+        if cell_type == 'code':
+            code_cell_count += 1
+            text_parts.append(f"[Code Cell {code_cell_count}]")
+            text_parts.append(source_text)
+
+            # Extract outputs if present
+            outputs = cell.get('outputs', [])
+            for output in outputs:
+                # Text output
+                if 'text' in output:
+                    output_text = output['text']
+                    if isinstance(output_text, list):
+                        output_text = ''.join(output_text)
+                    text_parts.append(f"[Output]\n{output_text}")
+
+                # Data output (e.g., pandas dataframes)
+                elif 'data' in output:
+                    data = output['data']
+                    if 'text/plain' in data:
+                        text_parts.append(f"[Output]\n{data['text/plain']}")
+
+        elif cell_type == 'markdown':
+            markdown_cell_count += 1
+            text_parts.append(f"[Markdown {markdown_cell_count}]")
+            text_parts.append(source_text)
+
+        elif cell_type == 'raw':
+            text_parts.append(f"[Raw Cell {i}]")
+            text_parts.append(source_text)
+
+    result = "\n\n".join(text_parts)
+
+    logger.info(
+        f"Extracted Jupyter notebook: {code_cell_count} code cells, "
+        f"{markdown_cell_count} markdown cells, {len(result)} characters"
+    )
+
+    return result
+
+
+def extract_code_file(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract content from source code file with metadata.
+
+    Provides syntax-aware processing with:
+    - Language detection
+    - Line count statistics
+    - Function/class detection hints
+    - Preserved code formatting
+
+    Args:
+        content_bytes: Source code content
+        filename: Original filename
+
+    Returns:
+        Formatted code with metadata
+    """
+    ext = Path(filename).suffix.lower()
+    language = CODE_EXTENSIONS.get(ext, 'Unknown')
+
+    # Decode content
+    try:
+        code = content_bytes.decode('utf-8')
+    except UnicodeDecodeError:
+        # Try latin-1 as fallback
+        try:
+            code = content_bytes.decode('latin-1', errors='replace')
+            logger.warning(f"Used latin-1 fallback for {filename}")
+        except Exception as e:
+            raise Exception(f"Failed to decode {filename}: {e}")
+
+    # Calculate statistics
+    lines = code.split('\n')
+    total_lines = len(lines)
+
+    # Count non-empty, non-comment lines (rough heuristic)
+    if language == 'Python':
+        code_lines = [l for l in lines if l.strip() and not l.strip().startswith('#')]
+    elif language in ['JavaScript', 'TypeScript', 'Java', 'C', 'C++', 'Go', 'Rust']:
+        code_lines = [l for l in lines if l.strip() and not l.strip().startswith('//')]
+    else:
+        code_lines = [l for l in lines if l.strip()]
+
+    loc = len(code_lines)
+
+    # Detect functions/classes (simple heuristics for common patterns)
+    functions = []
+    classes = []
+
+    if language == 'Python':
+        functions = [l.strip() for l in lines if l.strip().startswith('def ')]
+        classes = [l.strip() for l in lines if l.strip().startswith('class ')]
+    elif language in ['JavaScript', 'TypeScript']:
+        functions = [l.strip() for l in lines if 'function ' in l or '=>' in l]
+        classes = [l.strip() for l in lines if l.strip().startswith('class ')]
+    elif language in ['Java', 'C++', 'C#']:
+        classes = [l.strip() for l in lines if 'class ' in l]
+
+    # Build result
+    text_parts = [
+        f"SOURCE CODE FILE: {filename}",
+        f"Language: {language}",
+        f"Total Lines: {total_lines}",
+        f"Code Lines: {loc}",
+    ]
+
+    if functions:
+        text_parts.append(f"Functions/Methods: {len(functions)}")
+    if classes:
+        text_parts.append(f"Classes: {len(classes)}")
+
+    text_parts.extend([
+        "",
+        "CODE:",
+        code
+    ])
+
+    result = "\n".join(text_parts)
+
+    logger.info(
+        f"Extracted {language} code: {filename} "
+        f"({total_lines} lines, {loc} code lines)"
+    )
+
+    return result
