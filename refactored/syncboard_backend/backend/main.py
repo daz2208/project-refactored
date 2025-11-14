@@ -51,6 +51,7 @@ from .security_middleware import SecurityHeadersMiddleware, HTTPSRedirectMiddlew
 
 STORAGE_PATH = os.environ.get('SYNCBOARD_STORAGE_PATH', DEFAULT_STORAGE_PATH)
 ALLOWED_ORIGINS = os.environ.get('SYNCBOARD_ALLOWED_ORIGINS', '*')
+TESTING = os.environ.get('TESTING') == 'true'
 
 # =============================================================================
 # FastAPI Application
@@ -66,10 +67,17 @@ app = FastAPI(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Rate limiting
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Rate limiting (disabled in test mode)
+if not TESTING:
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    logger.info("🚦 Rate limiting enabled")
+else:
+    # Create dummy limiter for tests
+    limiter = Limiter(key_func=lambda: "test-client")
+    app.state.limiter = limiter
+    logger.info("🚦 Rate limiting disabled (test mode)")
 
 # CORS
 origins = ALLOWED_ORIGINS.split(',') if ALLOWED_ORIGINS != '*' else ['*']

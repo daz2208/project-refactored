@@ -6,6 +6,7 @@ Endpoints:
 - POST /token - Login and get JWT token
 """
 
+import os
 import logging
 from fastapi import APIRouter, HTTPException, Request, status
 from slowapi import Limiter
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
+# Test mode detection
+TESTING = os.environ.get('TESTING') == 'true'
+REGISTER_RATE_LIMIT = "1000/minute" if TESTING else "3/minute"
+LOGIN_RATE_LIMIT = "1000/minute" if TESTING else "5/minute"
+
 # Create router
 router = APIRouter(
     prefix="",
@@ -35,12 +41,12 @@ router = APIRouter(
 # =============================================================================
 
 @router.post("/users", response_model=User)
-@limiter.limit("3/minute")
+@limiter.limit(REGISTER_RATE_LIMIT)
 async def create_user(request: Request, user_create: UserCreate) -> User:
     """
     Register new user.
-    
-    Rate limited to 3 attempts per minute to prevent abuse.
+
+    Rate limited to 3 attempts per minute in production (1000/min in tests) to prevent abuse.
     
     Args:
         request: FastAPI request object (for rate limiting)
@@ -74,12 +80,12 @@ async def create_user(request: Request, user_create: UserCreate) -> User:
 # =============================================================================
 
 @router.post("/token", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit(LOGIN_RATE_LIMIT)
 async def login(request: Request, user_login: UserLogin) -> Token:
     """
     Login and get JWT token.
-    
-    Rate limited to 5 attempts per minute to prevent brute force attacks.
+
+    Rate limited to 5 attempts per minute in production (1000/min in tests) to prevent brute force attacks.
     
     Security: Uses bcrypt password verification (timing-attack resistant).
     
