@@ -43,6 +43,7 @@ from .db_storage_adapter import load_storage_from_db, save_storage_to_db
 from .storage import load_storage
 from .auth import hash_password
 from .constants import DEFAULT_STORAGE_PATH
+from .security_middleware import SecurityHeadersMiddleware, HTTPSRedirectMiddleware, get_environment
 
 # =============================================================================
 # Configuration
@@ -87,6 +88,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers middleware (Phase 2)
+environment = get_environment()
+logger.info(f"🔒 Running in {environment} environment")
+
+# Add security headers to all responses
+app.add_middleware(SecurityHeadersMiddleware, environment=environment)
+
+# Enforce HTTPS in production
+if environment == "production":
+    app.add_middleware(HTTPSRedirectMiddleware, environment=environment)
+    logger.info("🔒 HTTPS enforcement enabled")
+else:
+    logger.info("ℹ️  HTTPS enforcement disabled (not production)")
 
 # Request ID middleware
 @app.middleware("http")
