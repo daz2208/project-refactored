@@ -1,0 +1,45 @@
+fastapi
+uvicorn
+pydantic
+numpy
+scikit-learn
+requests
+python-multipart
+python-dotenv
+slowapi
+
+# Database (Phase 6)
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Authentication
+passlib
+bcrypt==4.0.1  # Pin to 4.0.1 for passlib 1.7.4 compatibility (bcrypt 5.x incompatible)
+python-jose[cryptography]
+cffi  # Required for cryptography backend
+httpx  # Required for FastAPI TestClient
+
+# AI API clients
+openai
+
+# Retry logic
+tenacity
+
+# Content ingestion dependencies
+yt-dlp
+pypdf
+beautifulsoup4
+python-docx
+
+# Office Suite (Phase 2)
+openpyxl  # Excel spreadsheets (.xlsx)
+python-pptx  # PowerPoint presentations (.pptx)
+
+# Archives & E-Books (Phase 3)
+ebooklib  # EPUB books (.epub)
+# Note: SRT/VTT parsing done manually (no external dependency needed)
+
+# Image processing
+Pillow
+pytesseract
