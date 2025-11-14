@@ -8,6 +8,7 @@ Implements same interface as KnowledgeBankRepository for drop-in replacement.
 import asyncio
 import logging
 from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
@@ -80,6 +81,13 @@ class DatabaseKnowledgeBankRepository:
             doc_id = self.vector_store.add_document(content)
 
             # Create database document
+            # Convert ingested_at from ISO string to datetime object for database
+            ingested_datetime = (
+                datetime.fromisoformat(metadata.ingested_at.replace('Z', '+00:00'))
+                if isinstance(metadata.ingested_at, str)
+                else metadata.ingested_at
+            )
+
             db_doc = DBDocument(
                 doc_id=doc_id,
                 owner_username=metadata.owner,
@@ -90,7 +98,7 @@ class DatabaseKnowledgeBankRepository:
                 image_path=metadata.image_path,
                 content_length=metadata.content_length,
                 skill_level=metadata.skill_level,
-                ingested_at=metadata.ingested_at
+                ingested_at=ingested_datetime
             )
             self.db.add(db_doc)
             self.db.flush()  # Get the database ID

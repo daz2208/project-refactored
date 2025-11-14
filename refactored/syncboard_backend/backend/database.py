@@ -6,7 +6,7 @@ for FastAPI endpoints.
 """
 
 import os
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 from contextlib import contextmanager
@@ -120,8 +120,8 @@ def check_database_health() -> dict:
     """
     try:
         with get_db_context() as db:
-            # Simple query to test connectivity
-            db.execute("SELECT 1")
+            # Simple query to test connectivity (SQLAlchemy 2.0 requires text() wrapper)
+            db.execute(text("SELECT 1"))
 
             return {
                 "database_connected": True,
