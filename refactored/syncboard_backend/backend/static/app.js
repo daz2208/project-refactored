@@ -774,10 +774,12 @@ function showTab(tabName) {
     // Update tab buttons
     document.getElementById('searchTab').classList.remove('active');
     document.getElementById('analyticsTab').classList.remove('active');
+    document.getElementById('advancedTab').classList.remove('active');
 
     // Update content visibility
     document.getElementById('searchContent').classList.add('hidden');
     document.getElementById('analyticsContent').classList.add('hidden');
+    document.getElementById('advancedContent').classList.add('hidden');
 
     if (tabName === 'search') {
         document.getElementById('searchTab').classList.add('active');
@@ -787,6 +789,12 @@ function showTab(tabName) {
         document.getElementById('analyticsContent').classList.remove('hidden');
         // Load analytics when tab is shown
         loadAnalytics();
+    } else if (tabName === 'advanced') {
+        document.getElementById('advancedTab').classList.add('active');
+        document.getElementById('advancedContent').classList.remove('hidden');
+        // Load data for advanced features
+        loadTags();
+        loadSavedSearches();
     }
 }
 
@@ -1082,4 +1090,540 @@ function getTimeAgo(date) {
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
     return date.toLocaleDateString();
+}
+
+// =============================================================================
+// Advanced Features (Phase 7.2-7.5)
+// =============================================================================
+
+// Switch between advanced feature sub-tabs
+function showAdvancedFeature(featureName) {
+    // Update sub-tab buttons
+    const subTabs = ['duplicatesSubTab', 'tagsSubTab', 'savedSearchesSubTab', 'relationshipsSubTab'];
+    subTabs.forEach(tabId => {
+        document.getElementById(tabId).classList.remove('active');
+    });
+
+    // Hide all feature sections
+    const sections = ['duplicatesFeature', 'tagsFeature', 'savedSearchesFeature', 'relationshipsFeature'];
+    sections.forEach(sectionId => {
+        document.getElementById(sectionId).classList.add('hidden');
+    });
+
+    // Show selected feature
+    if (featureName === 'duplicates') {
+        document.getElementById('duplicatesSubTab').classList.add('active');
+        document.getElementById('duplicatesFeature').classList.remove('hidden');
+    } else if (featureName === 'tags') {
+        document.getElementById('tagsSubTab').classList.add('active');
+        document.getElementById('tagsFeature').classList.remove('hidden');
+        loadTags();
+    } else if (featureName === 'savedSearches') {
+        document.getElementById('savedSearchesSubTab').classList.add('active');
+        document.getElementById('savedSearchesFeature').classList.remove('hidden');
+        loadSavedSearches();
+    } else if (featureName === 'relationships') {
+        document.getElementById('relationshipsSubTab').classList.add('active');
+        document.getElementById('relationshipsFeature').classList.remove('hidden');
+    }
+}
+
+// =============================================================================
+// Phase 7.2: Duplicate Detection
+// =============================================================================
+
+async function findDuplicates() {
+    const threshold = document.getElementById('duplicateThreshold').value;
+    const resultsDiv = document.getElementById('duplicatesResults');
+
+    resultsDiv.innerHTML = '<p style="color: #888;">Searching for duplicates...</p>';
+
+    try {
+        const response = await fetch(`${API_BASE}/duplicates?threshold=${threshold}&limit=100`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        const data = await response.json();
+        renderDuplicateGroups(data.duplicate_groups);
+
+    } catch (error) {
+        showToast('Failed to find duplicates: ' + error.message, 'error');
+        resultsDiv.innerHTML = '<p style="color: #ff4444;">Error loading duplicates</p>';
+    }
+}
+
+function renderDuplicateGroups(groups) {
+    const resultsDiv = document.getElementById('duplicatesResults');
+
+    if (groups.length === 0) {
+        resultsDiv.innerHTML = '<p style="color: #888; padding: 20px;">No duplicate groups found at this threshold.</p>';
+        return;
+    }
+
+    resultsDiv.innerHTML = `
+        <h3>Found ${groups.length} Duplicate Groups</h3>
+        ${groups.map((group, idx) => `
+            <div class="duplicate-group">
+                <h4>Group ${idx + 1} (${group.documents.length} documents, ${(group.avg_similarity * 100).toFixed(1)}% similar)</h4>
+                ${group.documents.map(doc => `
+                    <div class="duplicate-doc" style="background: #1a1a1a; padding: 10px; margin: 8px 0; border-radius: 4px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <strong>Doc ${doc.doc_id}</strong>
+                            <div>
+                                <span style="color: #888;">${doc.source_type} • ${doc.content.length} chars</span>
+                            </div>
+                        </div>
+                        <details style="margin-top: 8px;">
+                            <summary style="cursor: pointer; color: #00d4ff;">View Content</summary>
+                            <pre style="background: #0a0a0a; padding: 10px; margin-top: 8px; border-radius: 4px; white-space: pre-wrap;">${escapeHtml(doc.content.substring(0, 500))}${doc.content.length > 500 ? '...' : ''}</pre>
+                        </details>
+                    </div>
+                `).join('')}
+                <div style="margin-top: 10px;">
+                    <button onclick="mergeDuplicateGroup(${idx}, ${JSON.stringify(group.documents.map(d => d.doc_id))})" style="background: #f59e0b; padding: 8px 16px;">
+                        Merge Group (Keep First, Delete Others)
+                    </button>
+                </div>
+            </div>
+        `).join('')}
+    `;
+}
+
+async function mergeDuplicateGroup(groupIdx, docIds) {
+    const keepId = docIds[0];
+    const deleteIds = docIds.slice(1);
+
+    if (!confirm(`Keep document ${keepId} and delete ${deleteIds.length} duplicate(s)?\n\nThis cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/duplicates/merge`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                keep_doc_id: keepId,
+                delete_doc_ids: deleteIds
+            })
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast(`Merged successfully! Kept doc ${keepId}, deleted ${deleteIds.length} duplicate(s)`, 'success');
+
+        // Refresh duplicate search
+        findDuplicates();
+
+    } catch (error) {
+        showToast('Failed to merge duplicates: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// Phase 7.3: Tags System
+// =============================================================================
+
+async function createTag() {
+    const name = document.getElementById('newTagName').value.trim();
+    const color = document.getElementById('newTagColor').value;
+
+    if (!name) {
+        showToast('Tag name cannot be empty', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/tags`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ name, color })
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast(`Tag "${name}" created successfully`, 'success');
+
+        // Clear input and reload
+        document.getElementById('newTagName').value = '';
+        loadTags();
+
+    } catch (error) {
+        showToast('Failed to create tag: ' + error.message, 'error');
+    }
+}
+
+async function loadTags() {
+    try {
+        const response = await fetch(`${API_BASE}/tags`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            console.error('Failed to load tags');
+            return;
+        }
+
+        const data = await response.json();
+        renderTags(data.tags);
+
+    } catch (error) {
+        console.error('Failed to load tags:', error);
+    }
+}
+
+function renderTags(tags) {
+    const container = document.getElementById('tagsListContainer');
+
+    if (tags.length === 0) {
+        container.innerHTML = '<p style="color: #888; padding: 20px;">No tags yet. Create one above!</p>';
+        return;
+    }
+
+    container.innerHTML = `
+        <h3>Your Tags (${tags.length})</h3>
+        <div style="display: grid; gap: 10px; margin-top: 15px;">
+            ${tags.map(tag => `
+                <div class="tag-item" style="background: #1a1a1a; padding: 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="width: 20px; height: 20px; background: ${tag.color}; border-radius: 4px; display: inline-block;"></span>
+                        <strong>${tag.name}</strong>
+                        <span style="color: #888; font-size: 0.9rem;">(${tag.document_count} docs)</span>
+                    </div>
+                    <button onclick="deleteTag(${tag.id}, '${tag.name}')" style="background: #ff4444; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Delete</button>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function deleteTag(tagId, tagName) {
+    if (!confirm(`Delete tag "${tagName}"? This will remove it from all documents.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/tags/${tagId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast(`Tag "${tagName}" deleted`, 'success');
+        loadTags();
+
+    } catch (error) {
+        showToast('Failed to delete tag: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// Phase 7.4: Saved Searches
+// =============================================================================
+
+async function saveCurrentSearch() {
+    const query = document.getElementById('searchQuery').value.trim();
+    const name = prompt('Enter a name for this search:');
+
+    if (!name) return;
+
+    if (!query) {
+        showToast('No search query to save', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/saved-searches`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                name,
+                query,
+                filters: {}
+            })
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast(`Search "${name}" saved successfully`, 'success');
+        loadSavedSearches();
+
+    } catch (error) {
+        showToast('Failed to save search: ' + error.message, 'error');
+    }
+}
+
+async function loadSavedSearches() {
+    try {
+        const response = await fetch(`${API_BASE}/saved-searches`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            console.error('Failed to load saved searches');
+            return;
+        }
+
+        const data = await response.json();
+        renderSavedSearches(data.saved_searches);
+
+    } catch (error) {
+        console.error('Failed to load saved searches:', error);
+    }
+}
+
+function renderSavedSearches(searches) {
+    const container = document.getElementById('savedSearchesListContainer');
+
+    if (searches.length === 0) {
+        container.innerHTML = '<p style="color: #888; padding: 20px;">No saved searches yet. Save your frequent searches for quick access!</p>';
+        return;
+    }
+
+    container.innerHTML = `
+        <h3>Saved Searches (${searches.length})</h3>
+        <div style="display: grid; gap: 10px; margin-top: 15px;">
+            ${searches.map(search => `
+                <div class="saved-search-item" style="background: #1a1a1a; padding: 12px; border-radius: 6px;">
+                    <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
+                        <strong style="color: #00d4ff; flex-grow: 1; cursor: pointer;" onclick="useSavedSearch(${search.id})">${search.name}</strong>
+                        <button onclick="deleteSavedSearch(${search.id}, '${search.name}')" style="background: #ff4444; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">Delete</button>
+                    </div>
+                    <div style="color: #888; font-size: 0.9rem; margin-bottom: 4px;">
+                        Query: "${search.query}"
+                    </div>
+                    <div style="color: #666; font-size: 0.85rem;">
+                        Used ${search.use_count} times
+                        ${search.last_used_at ? ' • Last used ' + getTimeAgo(new Date(search.last_used_at)) : ''}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function useSavedSearch(searchId) {
+    try {
+        const response = await fetch(`${API_BASE}/saved-searches/${searchId}/use`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        const data = await response.json();
+
+        // Switch to search tab and execute the search
+        showTab('search');
+        document.getElementById('searchQuery').value = data.query;
+        searchKnowledge();
+
+    } catch (error) {
+        showToast('Failed to use saved search: ' + error.message, 'error');
+    }
+}
+
+async function deleteSavedSearch(searchId, searchName) {
+    if (!confirm(`Delete saved search "${searchName}"?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/saved-searches/${searchId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast(`Saved search "${searchName}" deleted`, 'success');
+        loadSavedSearches();
+
+    } catch (error) {
+        showToast('Failed to delete saved search: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// Phase 7.5: Document Relationships
+// =============================================================================
+
+async function createRelationship() {
+    const sourceDocId = parseInt(document.getElementById('relationshipSourceDoc').value);
+    const targetDocId = parseInt(document.getElementById('relationshipTargetDoc').value);
+    const relationType = document.getElementById('relationshipType').value;
+
+    if (!sourceDocId || !targetDocId) {
+        showToast('Please enter both document IDs', 'error');
+        return;
+    }
+
+    if (sourceDocId === targetDocId) {
+        showToast('Source and target must be different documents', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/documents/${sourceDocId}/relationships`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                target_doc_id: targetDocId,
+                relationship_type: relationType
+            })
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast(`Relationship created: ${sourceDocId} → ${targetDocId} (${relationType})`, 'success');
+
+        // Clear inputs
+        document.getElementById('relationshipSourceDoc').value = '';
+        document.getElementById('relationshipTargetDoc').value = '';
+
+    } catch (error) {
+        showToast('Failed to create relationship: ' + error.message, 'error');
+    }
+}
+
+async function viewDocumentRelationships() {
+    const docId = parseInt(document.getElementById('viewRelationshipsDocId').value);
+
+    if (!docId) {
+        showToast('Please enter a document ID', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/documents/${docId}/relationships`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        const data = await response.json();
+        renderDocumentRelationships(docId, data.related_documents);
+
+    } catch (error) {
+        showToast('Failed to load relationships: ' + error.message, 'error');
+    }
+}
+
+function renderDocumentRelationships(docId, relationships) {
+    const container = document.getElementById('relationshipsResultsContainer');
+
+    if (relationships.length === 0) {
+        container.innerHTML = `<p style="color: #888; padding: 20px;">Document ${docId} has no relationships.</p>`;
+        return;
+    }
+
+    const relationshipColors = {
+        'related': '#00d4ff',
+        'prerequisite': '#4ade80',
+        'followup': '#f59e0b',
+        'alternative': '#8b5cf6',
+        'supersedes': '#ef4444'
+    };
+
+    container.innerHTML = `
+        <h3>Relationships for Document ${docId} (${relationships.length})</h3>
+        <div style="display: grid; gap: 10px; margin-top: 15px;">
+            ${relationships.map(rel => `
+                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border-left: 4px solid ${relationshipColors[rel.relationship_type] || '#666'};">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>Doc ${rel.doc_id}</strong>
+                            <span class="relationship-type-badge" style="background: ${relationshipColors[rel.relationship_type] || '#666'}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; margin-left: 8px;">
+                                ${rel.relationship_type}
+                            </span>
+                            <span style="color: #888; margin-left: 8px; font-size: 0.9rem;">
+                                (${rel.direction})
+                            </span>
+                        </div>
+                        <button onclick="deleteRelationship(${docId}, ${rel.doc_id})" style="background: #ff4444; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">Remove</button>
+                    </div>
+                    <div style="color: #888; font-size: 0.9rem; margin-top: 6px;">
+                        ${rel.source_type} • ${rel.skill_level} • Cluster: ${rel.cluster_id !== null ? rel.cluster_id : 'None'}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function deleteRelationship(sourceDocId, targetDocId) {
+    if (!confirm(`Delete relationship between documents ${sourceDocId} and ${targetDocId}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/documents/${sourceDocId}/relationships/${targetDocId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast('Relationship deleted', 'success');
+
+        // Refresh the view
+        viewDocumentRelationships();
+
+    } catch (error) {
+        showToast('Failed to delete relationship: ' + error.message, 'error');
+    }
 }
