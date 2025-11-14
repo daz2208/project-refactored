@@ -161,3 +161,27 @@ class BuildSuggestion(BaseModel):
     relevant_clusters: List[int]
     starter_steps: List[str]
     file_structure: Optional[str] = None
+
+
+# =============================================================================
+# Advanced Features Models (Phases 7.2-7.5)
+# =============================================================================
+
+class TagCreate(BaseModel):
+    """Schema for creating a new tag."""
+    name: str
+    color: Optional[str] = None
+
+
+class SavedSearchCreate(BaseModel):
+    """Schema for creating a saved search."""
+    name: str
+    query: str
+    filters: Optional[dict] = None
+
+
+class RelationshipCreate(BaseModel):
+    """Schema for creating a document relationship."""
+    target_doc_id: int
+    relationship_type: str = "related"
+    strength: Optional[float] = None

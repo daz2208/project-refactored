@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, Dict, Any
 
-from ..models import User
+from ..models import User, SavedSearchCreate
 from ..dependencies import get_current_user
 from ..database import get_db_context
 from ..advanced_features_service import SavedSearchesService
@@ -20,17 +20,13 @@ router = APIRouter(tags=["saved-searches"])
 
 @router.post("/saved-searches")
 async def save_search(
-    name: str,
-    query: str,
-    filters: Optional[Dict[str, Any]] = None,
+    search_data: SavedSearchCreate,
     current_user: User = Depends(get_current_user)
 ):
     """Save a search query for quick access.
 
     Args:
-        name: Display name for this saved search
-        query: Search query text
-        filters: Optional filter parameters (cluster_id, source_type, skill_level, dates)
+        search_data: Saved search data (name, query, filters)
         current_user: Authenticated user
 
     Returns:
@@ -39,7 +35,12 @@ async def save_search(
     try:
         with get_db_context() as db:
             search_service = SavedSearchesService(db)
-            saved = search_service.save_search(name, query, filters, current_user.username)
+            saved = search_service.save_search(
+                search_data.name,
+                search_data.query,
+                search_data.filters,
+                current_user.username
+            )
             return saved
     except Exception as e:
         logger.error(f"Save search failed: {e}")

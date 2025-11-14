@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 
-from ..models import User
+from ..models import User, TagCreate
 from ..dependencies import get_current_user
 from ..database import get_db_context
 from ..advanced_features_service import TagsService
@@ -20,15 +20,13 @@ router = APIRouter(tags=["tags"])
 
 @router.post("/tags")
 async def create_tag(
-    name: str,
-    color: Optional[str] = None,
+    tag_data: TagCreate,
     current_user: User = Depends(get_current_user)
 ):
     """Create a new tag.
 
     Args:
-        name: Tag name
-        color: Optional hex color code (e.g., "#00d4ff")
+        tag_data: Tag creation data (name, color)
         current_user: Authenticated user
 
     Returns:
@@ -37,7 +35,7 @@ async def create_tag(
     try:
         with get_db_context() as db:
             tags_service = TagsService(db)
-            tag = tags_service.create_tag(name, current_user.username, color)
+            tag = tags_service.create_tag(tag_data.name, current_user.username, tag_data.color)
             return tag
     except Exception as e:
         logger.error(f"Tag creation failed: {e}")

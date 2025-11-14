@@ -567,11 +567,36 @@
                     <div id="searchContent" class="tab-content">
                         <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
                             <h2>🔍 Search & Explore</h2>
-                            <button onclick="whatCanIBuild(event)">What Can I Build?</button>
+                            <div style="display: flex; gap: 10px;">
+                                <button onclick="showAIGenerator()">✨ AI Generate</button>
+                                <button onclick="whatCanIBuild(event)">What Can I Build?</button>
+                            </div>
                         </div>
 
                         <input type="text" id="searchQuery" placeholder="Search your knowledge...">
                         <button onclick="searchKnowledge()">Search</button>
+
+                        <!-- AI Generation Panel (hidden by default) -->
+                        <div id="aiGeneratorPanel" class="hidden" style="background: #2a2a2a; padding: 20px; border-radius: 8px; margin-top: 20px;">
+                            <h3>🤖 AI Content Generation (RAG)</h3>
+                            <p style="color: #888; font-size: 0.9rem; margin-bottom: 15px;">
+                                Generate content using your knowledge bank for context
+                            </p>
+                            <textarea id="aiPrompt" rows="4" placeholder="Enter your prompt... (e.g., 'Explain Docker networking based on my notes')" style="width: 100%; margin-bottom: 10px;"></textarea>
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <select id="aiModelSelect" style="flex: 1;">
+                                    <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
+                                    <option value="gpt-4o">GPT-4o (Best)</option>
+                                    <option value="claude-3-haiku">Claude 3 Haiku</option>
+                                </select>
+                                <button onclick="generateWithAI(event)">Generate</button>
+                                <button onclick="hideAIGenerator()" style="background: #666;">Cancel</button>
+                            </div>
+                            <div id="aiResponseArea" style="margin-top: 20px; display: none;">
+                                <h4>Response:</h4>
+                                <div id="aiResponse" style="background: #1a1a1a; padding: 15px; border-radius: 6px; white-space: pre-wrap;"></div>
+                            </div>
+                        </div>
 
                         <div id="resultsArea" style="margin-top: 20px;">
                             <!-- Search results or build suggestions here -->
