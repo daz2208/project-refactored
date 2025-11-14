@@ -233,15 +233,23 @@ class DuplicateDetector:
         # Delete the duplicate documents
         deleted_count = 0
         for doc_id in delete_doc_ids:
+            # Get the document to find its internal ID
+            doc = self.db.query(DBDocument).filter(
+                DBDocument.doc_id == doc_id
+            ).first()
+
+            if not doc:
+                continue
+
             # Delete from vector documents
             self.db.query(DBVectorDocument).filter(
                 DBVectorDocument.doc_id == doc_id
             ).delete()
 
-            # Delete concepts
+            # Delete concepts - FIXED: Use document_id (foreign key to documents.id)
             from .db_models import DBConcept
             self.db.query(DBConcept).filter(
-                DBConcept.doc_id == doc_id
+                DBConcept.document_id == doc.id  # FIX: document_id references documents.id, not doc_id
             ).delete()
 
             # Delete document

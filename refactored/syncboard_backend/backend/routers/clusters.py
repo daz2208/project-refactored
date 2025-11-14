@@ -20,6 +20,7 @@ from ..dependencies import (
     get_metadata,
     get_clusters,
     get_users,
+    get_storage_lock,
 )
 from ..sanitization import sanitize_cluster_name
 from ..constants import SKILL_LEVELS
@@ -86,15 +87,15 @@ async def update_cluster(
 ):
     """
     Update cluster information (rename, etc).
-    
+
     Args:
         cluster_id: ID of cluster to update
         updates: Dictionary of fields to update
         user: Authenticated user
-    
+
     Returns:
         Updated cluster information
-    
+
     Raises:
         HTTPException 404: If cluster not found
     """
@@ -102,24 +103,27 @@ async def update_cluster(
     documents = get_documents()
     metadata = get_metadata()
     users = get_users()
-    
+    storage_lock = get_storage_lock()
+
     if cluster_id not in clusters:
         raise HTTPException(404, f"Cluster {cluster_id} not found")
-    
-    cluster = clusters[cluster_id]
-    
-    # Update allowed fields
-    if 'name' in updates:
-        # Sanitize cluster name
-        cluster.name = sanitize_cluster_name(updates['name'])
-    
-    if 'skill_level' in updates:
-        if updates['skill_level'] in SKILL_LEVELS:
-            cluster.skill_level = updates['skill_level']
-    
-    # Save to database
-    save_storage_to_db(documents, metadata, clusters, users)
-    
+
+    # CRITICAL: Use lock for thread-safe modifications to shared state
+    async with storage_lock:
+        cluster = clusters[cluster_id]
+
+        # Update allowed fields
+        if 'name' in updates:
+            # Sanitize cluster name
+            cluster.name = sanitize_cluster_name(updates['name'])
+
+        if 'skill_level' in updates:
+            if updates['skill_level'] in SKILL_LEVELS:
+                cluster.skill_level = updates['skill_level']
+
+        # Save to database
+        save_storage_to_db(documents, metadata, clusters, users)
+
     logger.info(f"Updated cluster {cluster_id}: {cluster.name}")
     return {"message": "Cluster updated", "cluster": cluster.dict()}
 
