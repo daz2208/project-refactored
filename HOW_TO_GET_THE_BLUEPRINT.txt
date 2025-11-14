@@ -1,0 +1,64 @@
+================================================================================
+HOW TO ACCESS THE BUILD_BLUEPRINT.md FILE
+================================================================================
+
+The BUILD_BLUEPRINT.md file EXISTS and has been pushed to GitHub.
+It is 45KB (1,580 lines) and contains the complete rebuild specification.
+
+WHY YOU DON'T SEE IT:
+The file is on a BRANCH, not on the main branch.
+
+================================================================================
+OPTION 1: View on GitHub Website
+================================================================================
+
+Go to this EXACT URL:
+
+https://github.com/daz2208/project-refactored/blob/claude/project-audit-rebuild-016uq6vZAWTEkpzPUBYG7dP6/BUILD_BLUEPRINT.md
+
+(Note: The branch name is "claude/project-audit-rebuild-016uq6vZAWTEkpzPUBYG7dP6")
+
+================================================================================
+OPTION 2: Clone the Branch to Your Desktop
+================================================================================
+
+Open your terminal and run:
+
+cd ~/Desktop
+git clone -b claude/project-audit-rebuild-016uq6vZAWTEkpzPUBYG7dP6 https://github.com/daz2208/project-refactored.git syncboard-blueprint
+cd syncboard-blueprint
+cat BUILD_BLUEPRINT.md
+
+================================================================================
+OPTION 3: If You Already Have the Repo Cloned
+================================================================================
+
+cd project-refactored
+git fetch origin
+git checkout claude/project-audit-rebuild-016uq6vZAWTEkpzPUBYG7dP6
+cat BUILD_BLUEPRINT.md
+
+================================================================================
+OPTION 4: Switch Branches on GitHub Website
+================================================================================
+
+1. Go to: https://github.com/daz2208/project-refactored
+2. Click the branch dropdown (says "main" by default)
+3. Select: claude/project-audit-rebuild-016uq6vZAWTEkpzPUBYG7dP6
+4. Click on BUILD_BLUEPRINT.md in the file list
+
+================================================================================
+VERIFY THE FILE EXISTS
+================================================================================
+
+The file was committed at: 2025-11-14 19:57 UTC
+Commit hash: 8ee1443
+File size: 45,514 bytes
+Line count: 1,580 lines
+
+If you STILL don't see it, check:
+- Are you looking at the RIGHT repository? (daz2208/project-refactored)
+- Are you on the RIGHT branch? (claude/project-audit-rebuild-016uq6vZAWTEkpzPUBYG7dP6)
+- Try refreshing your browser (Ctrl+F5)
+
+================================================================================
