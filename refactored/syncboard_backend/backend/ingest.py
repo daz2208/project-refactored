@@ -556,8 +556,11 @@ def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
     - Word documents (.docx)
     - Jupyter notebooks (.ipynb) - Phase 1
     - Code files (Python, JavaScript, etc.) - Phase 1
-    - Excel spreadsheets (.xlsx, .xls) ✨ Phase 2
-    - PowerPoint presentations (.pptx) ✨ Phase 2
+    - Excel spreadsheets (.xlsx, .xls) - Phase 2
+    - PowerPoint presentations (.pptx) - Phase 2
+    - ZIP archives (.zip) - Phase 3
+    - EPUB books (.epub) - Phase 3
+    - Subtitle files (.srt, .vtt) - Phase 3
 
     ✅ Audio files now compressed if over 25MB limit.
 
@@ -609,6 +612,18 @@ def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
     # PowerPoint presentations (Phase 2)
     elif file_ext == '.pptx':
         return extract_powerpoint_text(content_bytes, filename)
+
+    # ZIP archives (Phase 3)
+    elif file_ext == '.zip':
+        return extract_zip_archive(content_bytes, filename)
+
+    # EPUB books (Phase 3)
+    elif file_ext == '.epub':
+        return extract_epub_text(content_bytes, filename)
+
+    # Subtitle files (Phase 3)
+    elif file_ext in ['.srt', '.vtt']:
+        return extract_subtitles(content_bytes, filename)
 
     else:
         raise Exception(f"Unsupported file type: {file_ext}")
@@ -1096,3 +1111,374 @@ def extract_powerpoint_text(content_bytes: bytes, filename: str) -> str:
 
     except Exception as e:
         raise Exception(f"PowerPoint extraction failed: {e}")
+
+
+# ============================================================================
+# PHASE 3: ARCHIVES & E-BOOKS
+# ============================================================================
+
+def extract_zip_archive(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract and process ZIP archive contents.
+
+    Recursively processes all supported file types within the archive.
+    Skips directories and files larger than 10MB to prevent resource exhaustion.
+
+    Supported files within ZIP:
+    - All file types supported by ingest_upload_file()
+    - Including code files, Jupyter notebooks, Office docs, PDFs, etc.
+
+    Args:
+        content_bytes: Raw bytes of ZIP file
+        filename: Original filename for metadata
+
+    Returns:
+        Formatted text with metadata and extracted content from all files
+
+    Example Output:
+        ZIP ARCHIVE: code_project.zip
+        Files: 15 total, 12 processed, 3 skipped
+        Total size: 2.4 MB
+
+        === src/main.py ===
+        [Python code content]
+
+        === docs/README.md ===
+        [Markdown content]
+    """
+    import zipfile
+    import io
+
+    try:
+        zip_file = zipfile.ZipFile(io.BytesIO(content_bytes))
+
+        # Gather file statistics
+        total_files = 0
+        total_size = 0
+        processed_files = 0
+        skipped_files = 0
+
+        text_parts = []
+        text_parts.append(f"ZIP ARCHIVE: {filename}")
+        text_parts.append("=" * 60)
+        text_parts.append("")
+
+        # First pass: collect statistics
+        file_list = []
+        for file_info in zip_file.infolist():
+            if not file_info.is_dir():
+                total_files += 1
+                total_size += file_info.file_size
+                file_list.append(file_info)
+
+        text_parts.append(f"Total files: {total_files}")
+        text_parts.append(f"Total size: {total_size / (1024*1024):.2f} MB")
+        text_parts.append("")
+        text_parts.append("CONTENTS:")
+        text_parts.append("-" * 60)
+        text_parts.append("")
+
+        # Second pass: process each file
+        for file_info in file_list:
+            # Skip large files (> 10MB per file)
+            if file_info.file_size > 10 * 1024 * 1024:
+                text_parts.append(f"⚠️  SKIPPED (too large): {file_info.filename}")
+                text_parts.append(f"   Size: {file_info.file_size / (1024*1024):.2f} MB")
+                text_parts.append("")
+                skipped_files += 1
+                continue
+
+            # Skip hidden files and system files
+            if file_info.filename.startswith('.') or '__MACOSX' in file_info.filename:
+                skipped_files += 1
+                continue
+
+            try:
+                file_content = zip_file.read(file_info.filename)
+
+                # Recursively process supported file types
+                extracted_text = ingest_upload_file(file_info.filename, file_content)
+
+                text_parts.append(f"=== {file_info.filename} ===")
+                text_parts.append(extracted_text)
+                text_parts.append("")
+                text_parts.append("-" * 60)
+                text_parts.append("")
+
+                processed_files += 1
+
+            except Exception as e:
+                text_parts.append(f"⚠️  FAILED: {file_info.filename}")
+                text_parts.append(f"   Error: {str(e)}")
+                text_parts.append("")
+                skipped_files += 1
+
+        # Summary at the end
+        text_parts.append("")
+        text_parts.append("SUMMARY:")
+        text_parts.append(f"Processed: {processed_files} files")
+        text_parts.append(f"Skipped: {skipped_files} files")
+        if total_files > 0:
+            text_parts.append(f"Success rate: {(processed_files/total_files*100):.1f}%")
+        else:
+            text_parts.append(f"Success rate: N/A (empty archive)")
+
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted ZIP archive: {filename} "
+            f"({total_files} files, {processed_files} processed, {skipped_files} skipped)"
+        )
+
+        return result
+
+    except zipfile.BadZipFile:
+        raise Exception(f"Invalid ZIP file: {filename}")
+    except Exception as e:
+        raise Exception(f"ZIP extraction failed: {e}")
+
+
+def extract_epub_text(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from EPUB book.
+
+    EPUB is a popular e-book format used for digital books, technical documentation,
+    and educational materials. This function extracts:
+    - Book metadata (title, author, language)
+    - All chapter content
+    - Table of contents structure
+
+    Args:
+        content_bytes: Raw bytes of EPUB file
+        filename: Original filename for metadata
+
+    Returns:
+        Formatted text with metadata and all chapter content
+
+    Example Output:
+        EPUB BOOK: Python Programming Guide
+        Author: John Doe
+        Language: en
+
+        === Chapter 1: Introduction ===
+        [Chapter content]
+
+        === Chapter 2: Getting Started ===
+        [Chapter content]
+    """
+    import ebooklib
+    from ebooklib import epub
+    from bs4 import BeautifulSoup
+    import io
+
+    try:
+        book = epub.read_epub(io.BytesIO(content_bytes))
+        text_parts = []
+
+        # Extract metadata
+        title = filename  # Default to filename
+        author = "Unknown"
+        language = "unknown"
+
+        try:
+            if book.get_metadata('DC', 'title'):
+                title = book.get_metadata('DC', 'title')[0][0]
+        except:
+            pass
+
+        try:
+            if book.get_metadata('DC', 'creator'):
+                author = book.get_metadata('DC', 'creator')[0][0]
+        except:
+            pass
+
+        try:
+            if book.get_metadata('DC', 'language'):
+                language = book.get_metadata('DC', 'language')[0][0]
+        except:
+            pass
+
+        text_parts.append(f"EPUB BOOK: {title}")
+        text_parts.append("=" * 60)
+        text_parts.append(f"Author: {author}")
+        text_parts.append(f"Language: {language}")
+        text_parts.append(f"Filename: {filename}")
+        text_parts.append("")
+        text_parts.append("CONTENT:")
+        text_parts.append("-" * 60)
+        text_parts.append("")
+
+        # Extract chapters
+        chapter_count = 0
+        for item in book.get_items():
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                try:
+                    soup = BeautifulSoup(item.get_content(), 'html.parser')
+
+                    # Remove script and style elements
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+
+                    text = soup.get_text(separator='\n', strip=True)
+
+                    if text and len(text.strip()) > 10:  # Skip very short sections (reduced threshold)
+                        chapter_count += 1
+
+                        # Try to extract chapter title
+                        chapter_title = f"Chapter {chapter_count}"
+                        h1 = soup.find('h1')
+                        if h1:
+                            chapter_title = h1.get_text(strip=True)
+
+                        text_parts.append(f"=== {chapter_title} ===")
+                        text_parts.append("")
+                        text_parts.append(text)
+                        text_parts.append("")
+                        text_parts.append("-" * 60)
+                        text_parts.append("")
+
+                except Exception as e:
+                    logger.warning(f"Failed to extract EPUB chapter: {e}")
+                    continue
+
+        text_parts.append("")
+        text_parts.append(f"Total chapters extracted: {chapter_count}")
+
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted EPUB: {title} by {author} "
+            f"({chapter_count} chapters)"
+        )
+
+        return result
+
+    except Exception as e:
+        raise Exception(f"EPUB extraction failed: {e}")
+
+
+def extract_subtitles(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from subtitle files (SRT, VTT).
+
+    Subtitle files are commonly used for:
+    - Video transcripts
+    - Language learning materials
+    - Accessibility content
+    - Lecture transcriptions
+
+    Supported formats:
+    - SRT (SubRip): Most common format, includes timestamps
+    - VTT (WebVTT): Web-based subtitle format
+
+    Args:
+        content_bytes: Raw bytes of subtitle file
+        filename: Original filename for metadata
+
+    Returns:
+        Formatted text with all subtitle content (timestamps removed)
+
+    Example Output:
+        SUBTITLE FILE: lecture_01.srt
+        Format: SRT
+        Entries: 145
+
+        Hello and welcome to today's lecture.
+        In this session we'll cover...
+    """
+    from pathlib import Path
+
+    ext = Path(filename).suffix.lower()
+    text_parts = []
+
+    try:
+        if ext == '.srt':
+            # SRT format (manual parsing - simple format, no library needed)
+            text = content_bytes.decode('utf-8')
+            lines = text.split('\n')
+
+            text_parts.append(f"SUBTITLE FILE: {filename}")
+            text_parts.append("=" * 60)
+            text_parts.append(f"Format: SRT (SubRip)")
+
+            # Parse SRT manually
+            subtitle_texts = []
+            current_subtitle = []
+            in_subtitle_text = False
+
+            for line in lines:
+                line_stripped = line.strip()
+
+                # Skip empty lines
+                if not line_stripped:
+                    if current_subtitle:
+                        subtitle_texts.append('\n'.join(current_subtitle))
+                        current_subtitle = []
+                    in_subtitle_text = False
+                    continue
+
+                # Skip subtitle numbers (lines that are just digits)
+                if line_stripped.isdigit():
+                    continue
+
+                # Skip timestamp lines (contain -->)
+                if '-->' in line_stripped:
+                    in_subtitle_text = True
+                    continue
+
+                # This is subtitle text
+                if in_subtitle_text or current_subtitle:
+                    current_subtitle.append(line_stripped)
+
+            # Don't forget last subtitle
+            if current_subtitle:
+                subtitle_texts.append('\n'.join(current_subtitle))
+
+            text_parts.append(f"Entries: {len(subtitle_texts)}")
+            text_parts.append("")
+            text_parts.append("TRANSCRIPT:")
+            text_parts.append("-" * 60)
+            text_parts.append("")
+
+            # Add all subtitle text
+            text_parts.extend(subtitle_texts)
+
+            logger.info(f"Extracted SRT subtitles: {filename} ({len(subtitle_texts)} entries)")
+
+        elif ext == '.vtt':
+            # WebVTT format (simple parsing)
+            text = content_bytes.decode('utf-8')
+            lines = text.split('\n')
+
+            text_parts.append(f"SUBTITLE FILE: {filename}")
+            text_parts.append("=" * 60)
+            text_parts.append(f"Format: WebVTT")
+            text_parts.append("")
+            text_parts.append("TRANSCRIPT:")
+            text_parts.append("-" * 60)
+            text_parts.append("")
+
+            # Filter out WebVTT header, timestamps, and metadata
+            subtitle_lines = []
+            for line in lines:
+                line = line.strip()
+                # Skip empty lines, WebVTT header, timestamps, and cue settings
+                if (line and
+                    not line.startswith('WEBVTT') and
+                    '-->' not in line and
+                    not line.startswith('NOTE') and
+                    not line.isdigit()):  # Skip cue numbers
+                    subtitle_lines.append(line)
+
+            text_parts.extend(subtitle_lines)
+
+            logger.info(f"Extracted VTT subtitles: {filename} ({len(subtitle_lines)} lines)")
+
+        else:
+            raise Exception(f"Unsupported subtitle format: {ext}")
+
+        result = "\n".join(text_parts)
+        return result
+
+    except Exception as e:
+        raise Exception(f"Subtitle extraction failed: {e}")

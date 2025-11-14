@@ -36,6 +36,10 @@ python-docx
 openpyxl  # Excel spreadsheets (.xlsx)
 python-pptx  # PowerPoint presentations (.pptx)
 
+# Archives & E-Books (Phase 3)
+ebooklib  # EPUB books (.epub)
+# Note: SRT/VTT parsing done manually (no external dependency needed)
+
 # Image processing
 Pillow
 pytesseract
