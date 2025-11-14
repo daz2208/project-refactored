@@ -251,7 +251,7 @@ class AnalyticsService:
             List of concepts with their occurrence counts
         """
         query = self.db.query(
-            DBConcept.concept_text,
+            DBConcept.name,  # FIX: Field is 'name' not 'concept_text'
             func.count(DBConcept.id).label('count')
         )
 
@@ -261,13 +261,13 @@ class AnalyticsService:
             )
 
         results = query.group_by(
-            DBConcept.concept_text
+            DBConcept.name  # FIX: Field is 'name' not 'concept_text'
         ).order_by(
             func.count(DBConcept.id).desc()
         ).limit(limit).all()
 
         return [
-            {"concept": r.concept_text, "count": r.count}
+            {"concept": r.name, "count": r.count}  # FIX: Field is 'name' not 'concept_text'
             for r in results
         ]
 

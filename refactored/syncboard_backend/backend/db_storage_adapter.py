@@ -41,11 +41,23 @@ def load_storage_from_db(
     try:
         with get_db_context() as db:
             # Load vector documents and rebuild vector store
-            vector_docs = db.query(DBVectorDocument).all()
+            # CRITICAL FIX: Load in order and verify doc_id alignment
+            vector_docs = db.query(DBVectorDocument).order_by(DBVectorDocument.doc_id).all()
+
             for vdoc in vector_docs:
-                # Add to vector store (this assigns the doc_id)
-                actual_doc_id = vector_store.add_document(vdoc.content)
-                # Map database doc_id to vector store doc_id
+                # Add to vector store - returns auto-incremented ID
+                vs_doc_id = vector_store.add_document(vdoc.content)
+
+                # CRITICAL: Verify vector store ID matches database ID
+                # If mismatch, vector store queries will fail!
+                if vs_doc_id != vdoc.doc_id:
+                    logger.warning(
+                        f"Vector store ID mismatch: DB has {vdoc.doc_id}, "
+                        f"vector store assigned {vs_doc_id}. "
+                        f"This will cause search failures!"
+                    )
+
+                # Use database doc_id for consistency
                 documents[vdoc.doc_id] = vdoc.content
 
             # Load document metadata
