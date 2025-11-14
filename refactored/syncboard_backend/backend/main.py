@@ -63,6 +63,15 @@ from .clustering import ClusteringEngine
 from .image_processor import ImageProcessor
 from .build_suggester import BuildSuggester
 from .analytics_service import AnalyticsService
+from .sanitization import (
+    sanitize_filename,
+    sanitize_text_content,
+    sanitize_description,
+    sanitize_username,
+    validate_url,
+    sanitize_cluster_name,
+    validate_positive_integer,
+)
 
 # Try to import AI generation
 try:
@@ -312,14 +321,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 @limiter.limit("3/minute")
 async def create_user(request: Request, user_create: UserCreate) -> User:
     """Register new user. Rate limited to 3 attempts per minute."""
-    if user_create.username in users:
+    # Sanitize username to prevent injection attacks
+    username = sanitize_username(user_create.username)
+
+    if username in users:
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    users[user_create.username] = hash_password(user_create.password)
+    users[username] = hash_password(user_create.password)
     save_storage_to_db(documents, metadata, clusters, users)
-    logger.info(f"Created user: {user_create.username}")
+    logger.info(f"Created user: {username}")
 
-    return User(username=user_create.username)
+    return User(username=username)
 
 
 @app.post("/token", response_model=Token)
@@ -330,14 +342,16 @@ async def login(request: Request, user_login: UserLogin) -> Token:
 
     Security: Uses bcrypt password verification (timing-attack resistant).
     """
-    stored_hash = users.get(user_login.username)
+    # Sanitize username to prevent injection attacks
+    username = sanitize_username(user_login.username)
+    stored_hash = users.get(username)
     if not stored_hash or not verify_password(user_login.password, stored_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
 
-    access_token = create_access_token(data={"sub": user_login.username})
+    access_token = create_access_token(data={"sub": username})
     return Token(access_token=access_token)
 
 # =============================================================================
@@ -386,16 +400,16 @@ async def upload_text_content(
     current_user: User = Depends(get_current_user)
 ):
     """Upload plain text content. Rate limited to 10 uploads per minute."""
-    if not req.content or not req.content.strip():
-        raise HTTPException(status_code=400, detail="Content cannot be empty")
+    # Sanitize text content to prevent XSS and resource exhaustion
+    content = sanitize_text_content(req.content)
 
     async with storage_lock:
         # Extract concepts
-        extraction = await concept_extractor.extract(req.content, "text")
+        extraction = await concept_extractor.extract(content, "text")
 
         # Add to vector store
-        doc_id = vector_store.add_document(req.content)
-        documents[doc_id] = req.content
+        doc_id = vector_store.add_document(content)
+        documents[doc_id] = content
 
         # Create metadata
         meta = DocumentMetadata(
@@ -406,7 +420,7 @@ async def upload_text_content(
             skill_level=extraction.get("skill_level", "unknown"),
             cluster_id=None,
             ingested_at=datetime.utcnow().isoformat(),
-            content_length=len(req.content)
+            content_length=len(content)
         )
         metadata[doc_id] = meta
 
@@ -442,8 +456,11 @@ async def upload_url(
     current_user: User = Depends(get_current_user)
 ):
     """Upload document via URL (YouTube, web article, etc). Rate limited to 5 uploads per minute."""
+    # Validate URL to prevent SSRF attacks
+    url = validate_url(str(doc.url))
+
     try:
-        document_text = ingest.download_url(str(doc.url))
+        document_text = ingest.download_url(url)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to ingest URL: {exc}")
     
@@ -460,7 +477,7 @@ async def upload_url(
             doc_id=doc_id,
             owner=current_user.username,
             source_type="url",
-            source_url=str(doc.url),
+            source_url=url,
             concepts=[Concept(**c) for c in extraction.get("concepts", [])],
             skill_level=extraction.get("skill_level", "unknown"),
             cluster_id=None,
@@ -497,6 +514,9 @@ async def upload_file(
     current_user: User = Depends(get_current_user)
 ):
     """Upload file (PDF, audio, etc) as base64. Rate limited to 5 uploads per minute."""
+    # Sanitize filename to prevent path traversal attacks
+    filename = sanitize_filename(req.filename)
+
     try:
         file_bytes = base64.b64decode(req.content)
 
@@ -507,7 +527,7 @@ async def upload_file(
                 detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB"
             )
 
-        document_text = ingest.ingest_upload_file(req.filename, file_bytes)
+        document_text = ingest.ingest_upload_file(filename, file_bytes)
     except HTTPException:
         raise
     except Exception as exc:
@@ -526,7 +546,7 @@ async def upload_file(
             doc_id=doc_id,
             owner=current_user.username,
             source_type="file",
-            filename=req.filename,
+            filename=filename,
             concepts=[Concept(**c) for c in extraction.get("concepts", [])],
             skill_level=extraction.get("skill_level", "unknown"),
             cluster_id=None,
@@ -545,8 +565,8 @@ async def upload_file(
         
         # Save
         save_storage_to_db(documents, metadata, clusters, users)
-        
-        logger.info(f"User {current_user.username} uploaded file {req.filename} as doc {doc_id}")
+
+        logger.info(f"User {current_user.username} uploaded file {filename} as doc {doc_id}")
         
         return {
             "document_id": doc_id,
@@ -563,6 +583,12 @@ async def upload_image(
     current_user: User = Depends(get_current_user)
 ):
     """Upload and process image with OCR. Rate limited to 10 uploads per minute."""
+    # Sanitize filename to prevent path traversal attacks
+    filename = sanitize_filename(req.filename)
+
+    # Sanitize optional description
+    description = sanitize_description(req.description)
+
     try:
         image_bytes = base64.b64decode(req.content)
 
@@ -576,18 +602,18 @@ async def upload_image(
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64: {e}")
-    
+
     async with storage_lock:
         # Extract text via OCR
         extracted_text = image_processor.extract_text_from_image(image_bytes)
-        
+
         # Get image metadata
         img_meta = image_processor.get_image_metadata(image_bytes)
-        
+
         # Combine description + OCR text
         full_content = ""
-        if req.description:
-            full_content += f"Description: {req.description}\n\n"
+        if description:
+            full_content += f"Description: {description}\n\n"
         if extracted_text:
             full_content += f"Extracted text: {extracted_text}\n\n"
         full_content += f"Image metadata: {img_meta}"
@@ -607,7 +633,7 @@ async def upload_image(
             doc_id=doc_id,
             owner=current_user.username,
             source_type="image",
-            filename=req.filename,
+            filename=filename,
             concepts=[Concept(**c) for c in extraction.get("concepts", [])],
             skill_level=extraction.get("skill_level", "unknown"),
             cluster_id=None,
@@ -627,9 +653,9 @@ async def upload_image(
         
         # Save
         save_storage_to_db(documents, metadata, clusters, users)
-        
+
         logger.info(
-            f"User {current_user.username} uploaded image {req.filename} as doc {doc_id} "
+            f"User {current_user.username} uploaded image {filename} as doc {doc_id} "
             f"(OCR: {len(extracted_text)} chars)"
         )
         
@@ -697,7 +723,9 @@ async def search_full_content(
 
     By default returns 500-char snippets for performance.
     """
-    if top_k < 1 or top_k > 50:
+    # Validate top_k parameter
+    top_k = validate_positive_integer(top_k, "top_k", max_value=50)
+    if top_k < 1:
         top_k = 10
 
     # Get user's documents
@@ -832,10 +860,11 @@ async def what_can_i_build(
     current_user: User = Depends(get_current_user)
 ):
     """Analyze knowledge bank and suggest viable projects. Rate limited to 3 requests per minute."""
-    max_suggestions = req.max_suggestions
-    if max_suggestions < 1 or max_suggestions > 10:
+    # Validate max_suggestions parameter
+    max_suggestions = validate_positive_integer(req.max_suggestions, "max_suggestions", max_value=10)
+    if max_suggestions < 1:
         max_suggestions = 5
-    
+
     # Filter to user's content
     user_clusters = {
         cid: cluster for cid, cluster in clusters.items()
@@ -1046,7 +1075,8 @@ async def update_cluster(
 
     # Update allowed fields
     if 'name' in updates:
-        cluster.name = updates['name']
+        # Sanitize cluster name
+        cluster.name = sanitize_cluster_name(updates['name'])
 
     if 'skill_level' in updates:
         if updates['skill_level'] in ['beginner', 'intermediate', 'advanced', 'unknown']:
