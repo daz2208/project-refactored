@@ -3,17 +3,18 @@ FastAPI backend for SyncBoard 3.0 Knowledge Bank.
 
 Knowledge-first architecture with auto-clustering and build suggestions.
 Boards removed - all content organized by AI-discovered concepts.
+
+This main file handles app initialization and router mounting.
+All endpoints are organized in the routers/ directory.
 """
 
 import os
-import asyncio
-import base64
 import uuid
-from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+import logging
+from pathlib import Path
+from datetime import datetime
 
 from dotenv import load_dotenv
-from pathlib import Path
 
 # Load environment variables
 env_paths = [
@@ -25,86 +26,30 @@ for env_path in env_paths:
         load_dotenv(env_path)
         break
 
-from fastapi import FastAPI, HTTPException, Depends, status, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordBearer
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-import logging
 
-from .models import (
-    DocumentUpload,
-    TextUpload,
-    FileBytesUpload,
-    ImageUpload,
-    SearchResult,
-    UserCreate,
-    User,
-    Token,
-    UserLogin,
-    GenerationRequest,
-    BuildSuggestionRequest,
-    DocumentMetadata,
-    Cluster,
-    Concept,
-)
-from .vector_store import VectorStore
-from .storage import load_storage, save_storage
-from .db_storage_adapter import load_storage_from_db, save_storage_to_db
+# Import routers
+from .routers import auth, uploads, search, clusters, documents, build_suggestions, analytics, ai_generation
+
+# Import dependencies and shared state
+from . import dependencies
 from .database import init_db, check_database_health
-from . import ingest
-from .concept_extractor import ConceptExtractor
-from .clustering import ClusteringEngine
-from .image_processor import ImageProcessor
-from .build_suggester import BuildSuggester
-from .analytics_service import AnalyticsService
-from .sanitization import (
-    sanitize_filename,
-    sanitize_text_content,
-    sanitize_description,
-    sanitize_username,
-    validate_url,
-    sanitize_cluster_name,
-    validate_positive_integer,
-)
-
-# Try to import AI generation
-try:
-    from .ai_generation_real import generate_with_rag, MODELS
-    REAL_AI_AVAILABLE = True
-    print("[SUCCESS] Real AI integration loaded")
-except ImportError as e:
-    REAL_AI_AVAILABLE = False
-    print(f"[WARNING] Real AI not available: {e}")
+from .db_storage_adapter import load_storage_from_db, save_storage_to_db
+from .storage import load_storage
+from .auth import hash_password
+from .constants import DEFAULT_STORAGE_PATH
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-STORAGE_PATH = os.environ.get('SYNCBOARD_STORAGE_PATH', 'storage.json')
-VECTOR_DIM = int(os.environ.get('SYNCBOARD_VECTOR_DIM', '256'))
-SECRET_KEY = os.environ.get('SYNCBOARD_SECRET_KEY')
-if not SECRET_KEY:
-    raise RuntimeError(
-        "SYNCBOARD_SECRET_KEY environment variable must be set. "
-        "Generate one with: openssl rand -hex 32"
-    )
-TOKEN_EXPIRE_MINUTES = int(os.environ.get('SYNCBOARD_TOKEN_EXPIRE_MINUTES', '1440'))
+STORAGE_PATH = os.environ.get('SYNCBOARD_STORAGE_PATH', DEFAULT_STORAGE_PATH)
 ALLOWED_ORIGINS = os.environ.get('SYNCBOARD_ALLOWED_ORIGINS', '*')
-
-# File upload limits (50MB max)
-MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
-
-# Password hashing configuration (bcrypt)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# JWT algorithm
-ALGORITHM = "HS256"
 
 # =============================================================================
 # FastAPI Application
@@ -143,7 +88,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request ID middleware (Phase 5)
+# Request ID middleware
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     """
@@ -161,1050 +106,88 @@ async def add_request_id(request: Request, call_next):
 
     return response
 
-# OAuth2
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 # =============================================================================
-# Global State
-# =============================================================================
-
-vector_store = VectorStore(dim=VECTOR_DIM)
-documents: Dict[int, str] = {}
-metadata: Dict[int, DocumentMetadata] = {}
-clusters: Dict[int, Cluster] = {}
-users: Dict[str, str] = {}
-storage_lock = asyncio.Lock()
-
-# Initialize processors
-concept_extractor = ConceptExtractor()
-clustering_engine = ClusteringEngine()
-image_processor = ImageProcessor()
-build_suggester = BuildSuggester()
-
-# =============================================================================
-# Startup
+# Startup Event
 # =============================================================================
 
 @app.on_event("startup")
 async def startup_event():
-    global documents, metadata, clusters, users
-
+    """Initialize database and load data on startup."""
     # Initialize database
     try:
         init_db()
         logger.info("✅ Database initialized")
 
-        # Load from database (Phase 6.5)
-        documents, metadata, clusters, users = load_storage_from_db(vector_store)
-        logger.info(f"Loaded from database: {len(documents)} documents, {len(clusters)} clusters, {len(users)} users")
+        # Load from database
+        docs, meta, clusts, usrs = load_storage_from_db(dependencies.vector_store)
+        
+        # Update global state
+        dependencies.documents.update(docs)
+        dependencies.metadata.update(meta)
+        dependencies.clusters.update(clusts)
+        dependencies.users.update(usrs)
+        
+        logger.info(f"Loaded from database: {len(docs)} documents, {len(clusts)} clusters, {len(usrs)} users")
     except Exception as e:
         logger.warning(f"Database load failed: {e}. Falling back to file storage.")
         # Fallback to file storage
-        documents, metadata, clusters, users = load_storage(STORAGE_PATH, vector_store)
-        logger.info(f"Loaded from file: {len(documents)} documents, {len(clusters)} clusters, {len(users)} users")
+        docs, meta, clusts, usrs = load_storage(STORAGE_PATH, dependencies.vector_store)
+        
+        # Update global state
+        dependencies.documents.update(docs)
+        dependencies.metadata.update(meta)
+        dependencies.clusters.update(clusts)
+        dependencies.users.update(usrs)
+        
+        logger.info(f"Loaded from file: {len(docs)} documents, {len(clusts)} clusters, {len(usrs)} users")
 
     # Create default test user if none exist
-    if not users:
-        users['test'] = hash_password('test123')
+    if not dependencies.users:
+        dependencies.users['test'] = hash_password('test123')
         try:
-            save_storage_to_db(documents, metadata, clusters, users)
+            save_storage_to_db(
+                dependencies.documents,
+                dependencies.metadata,
+                dependencies.clusters,
+                dependencies.users
+            )
             logger.info("Created default test user in database")
         except Exception as e:
-            logger.warning(f"Database save failed: {e}. Saving to file.")
-            save_storage_to_db(documents, metadata, clusters, users)
-            logger.info("Created default test user in file")
-
-# Mount static files
-try:
-    static_path = Path(__file__).parent / 'static'
-    if static_path.exists():
-        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
-except Exception as e:
-    logger.warning(f"Could not mount static files: {e}")
+            logger.warning(f"Database save failed: {e}")
 
 # =============================================================================
-# Authentication Helpers
+# Mount Routers
 # =============================================================================
 
-def hash_password(password: str) -> str:
-    """
-    Hash password using bcrypt with automatic per-user salt generation.
+# Authentication endpoints
+app.include_router(auth.router)
 
-    Security improvements over previous implementation:
-    - Each password gets a unique salt (prevents rainbow table attacks)
-    - Bcrypt is designed for password hashing (slow by design)
-    - Automatically handles salt generation and verification
-    """
-    return pwd_context.hash(password)
+# Upload endpoints
+app.include_router(uploads.router)
 
+# Search endpoints
+app.include_router(search.router)
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a password against its hash.
+# Cluster management endpoints
+app.include_router(clusters.router)
 
-    Args:
-        plain_password: The plain text password to verify
-        hashed_password: The bcrypt hash to check against
+# Document CRUD endpoints
+app.include_router(documents.router)
 
-    Returns:
-        True if password matches, False otherwise
-    """
-    return pwd_context.verify(plain_password, hashed_password)
+# Build suggestion endpoints
+app.include_router(build_suggestions.router)
 
+# Analytics endpoints
+app.include_router(analytics.router)
 
-def create_access_token(data: dict) -> str:
-    """
-    Create a secure JWT access token using python-jose.
-
-    Security improvements over previous implementation:
-    - Uses industry-standard JWT library (python-jose)
-    - Automatic expiration handling
-    - Prevents timing attacks
-    - Standard JWT format (compatible with JWT.io, etc.)
-
-    Args:
-        data: Dictionary with user data (e.g., {"sub": "username"})
-
-    Returns:
-        JWT token string
-    """
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-def decode_access_token(token: str) -> dict:
-    """
-    Decode and verify JWT token using python-jose.
-
-    Args:
-        token: JWT token string
-
-    Returns:
-        Decoded token data
-
-    Raises:
-        JWTError: If token is invalid or expired
-    """
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except JWTError:
-        raise ValueError('Invalid token')
-
-
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    """Get current user from token."""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = decode_access_token(token)
-        username = payload.get("sub")
-        if not username or username not in users:
-            raise credentials_exception
-    except Exception:
-        raise credentials_exception
-    
-    return User(username=username)
+# AI generation endpoints
+app.include_router(ai_generation.router)
 
 # =============================================================================
-# Authentication Endpoints
+# Health Check Endpoint
 # =============================================================================
 
-@app.post("/users", response_model=User)
-@limiter.limit("3/minute")
-async def create_user(request: Request, user_create: UserCreate) -> User:
-    """Register new user. Rate limited to 3 attempts per minute."""
-    # Sanitize username to prevent injection attacks
-    username = sanitize_username(user_create.username)
-
-    if username in users:
-        raise HTTPException(status_code=400, detail="Username already exists")
-
-    users[username] = hash_password(user_create.password)
-    save_storage_to_db(documents, metadata, clusters, users)
-    logger.info(f"Created user: {username}")
-
-    return User(username=username)
-
-
-@app.post("/token", response_model=Token)
-@limiter.limit("5/minute")
-async def login(request: Request, user_login: UserLogin) -> Token:
-    """
-    Login and get JWT token. Rate limited to 5 attempts per minute.
-
-    Security: Uses bcrypt password verification (timing-attack resistant).
-    """
-    # Sanitize username to prevent injection attacks
-    username = sanitize_username(user_login.username)
-    stored_hash = users.get(username)
-    if not stored_hash or not verify_password(user_login.password, stored_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
-
-    access_token = create_access_token(data={"sub": username})
-    return Token(access_token=access_token)
-
-# =============================================================================
-# Clustering Helper
-# =============================================================================
-
-async def find_or_create_cluster(
-    doc_id: int,
-    suggested_cluster: str,
-    concepts: List[Dict]
-) -> int:
-    """Find best cluster or create new one."""
-    meta = metadata[doc_id]
-    
-    # Try to find existing cluster
-    cluster_id = clustering_engine.find_best_cluster(
-        doc_concepts=concepts,
-        suggested_name=suggested_cluster,
-        existing_clusters=clusters
-    )
-    
-    if cluster_id is not None:
-        clustering_engine.add_to_cluster(cluster_id, doc_id, clusters)
-        return cluster_id
-    
-    # Create new cluster
-    cluster_id = clustering_engine.create_cluster(
-        doc_id=doc_id,
-        name=suggested_cluster,
-        concepts=concepts,
-        skill_level=meta.skill_level,
-        existing_clusters=clusters
-    )
-    
-    return cluster_id
-
-# =============================================================================
-# Upload Endpoints (NO BOARD_ID)
-# =============================================================================
-
-@app.post("/upload_text")
-@limiter.limit("10/minute")
-async def upload_text_content(
-    req: TextUpload,
-    request: Request,
-    current_user: User = Depends(get_current_user)
-):
-    """Upload plain text content. Rate limited to 10 uploads per minute."""
-    # Sanitize text content to prevent XSS and resource exhaustion
-    content = sanitize_text_content(req.content)
-
-    async with storage_lock:
-        # Extract concepts
-        extraction = await concept_extractor.extract(content, "text")
-
-        # Add to vector store
-        doc_id = vector_store.add_document(content)
-        documents[doc_id] = content
-
-        # Create metadata
-        meta = DocumentMetadata(
-            doc_id=doc_id,
-            owner=current_user.username,
-            source_type="text",
-            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
-            skill_level=extraction.get("skill_level", "unknown"),
-            cluster_id=None,
-            ingested_at=datetime.utcnow().isoformat(),
-            content_length=len(content)
-        )
-        metadata[doc_id] = meta
-
-        # Find or create cluster
-        cluster_id = await find_or_create_cluster(
-            doc_id=doc_id,
-            suggested_cluster=extraction.get("suggested_cluster", "General"),
-            concepts=extraction.get("concepts", [])
-        )
-        metadata[doc_id].cluster_id = cluster_id
-
-        # Save
-        save_storage_to_db(documents, metadata, clusters, users)
-
-        # Structured logging with request context (Phase 5)
-        logger.info(
-            f"[{request.state.request_id}] User {current_user.username} uploaded text as doc {doc_id} "
-            f"(cluster: {cluster_id}, concepts: {len(extraction.get('concepts', []))})"
-        )
-        
-        return {
-            "document_id": doc_id,
-            "cluster_id": cluster_id,
-            "concepts": extraction.get("concepts", [])
-        }
-
-
-@app.post("/upload")
-@limiter.limit("5/minute")
-async def upload_url(
-    doc: DocumentUpload,
-    request: Request,
-    current_user: User = Depends(get_current_user)
-):
-    """Upload document via URL (YouTube, web article, etc). Rate limited to 5 uploads per minute."""
-    # Validate URL to prevent SSRF attacks
-    url = validate_url(str(doc.url))
-
-    try:
-        document_text = ingest.download_url(url)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to ingest URL: {exc}")
-    
-    async with storage_lock:
-        # Extract concepts
-        extraction = await concept_extractor.extract(document_text, "url")
-        
-        # Add to vector store
-        doc_id = vector_store.add_document(document_text)
-        documents[doc_id] = document_text
-        
-        # Create metadata
-        meta = DocumentMetadata(
-            doc_id=doc_id,
-            owner=current_user.username,
-            source_type="url",
-            source_url=url,
-            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
-            skill_level=extraction.get("skill_level", "unknown"),
-            cluster_id=None,
-            ingested_at=datetime.utcnow().isoformat(),
-            content_length=len(document_text)
-        )
-        metadata[doc_id] = meta
-        
-        # Cluster
-        cluster_id = await find_or_create_cluster(
-            doc_id=doc_id,
-            suggested_cluster=extraction.get("suggested_cluster", "General"),
-            concepts=extraction.get("concepts", [])
-        )
-        metadata[doc_id].cluster_id = cluster_id
-        
-        # Save
-        save_storage_to_db(documents, metadata, clusters, users)
-        
-        logger.info(f"User {current_user.username} uploaded URL as doc {doc_id}")
-        
-        return {
-            "document_id": doc_id,
-            "cluster_id": cluster_id,
-            "concepts": extraction.get("concepts", [])
-        }
-
-
-@app.post("/upload_file")
-@limiter.limit("5/minute")
-async def upload_file(
-    req: FileBytesUpload,
-    request: Request,
-    current_user: User = Depends(get_current_user)
-):
-    """Upload file (PDF, audio, etc) as base64. Rate limited to 5 uploads per minute."""
-    # Sanitize filename to prevent path traversal attacks
-    filename = sanitize_filename(req.filename)
-
-    try:
-        file_bytes = base64.b64decode(req.content)
-
-        # Validate file size
-        if len(file_bytes) > MAX_UPLOAD_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB"
-            )
-
-        document_text = ingest.ingest_upload_file(filename, file_bytes)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to process file: {exc}")
-    
-    async with storage_lock:
-        # Extract concepts
-        extraction = await concept_extractor.extract(document_text, "file")
-        
-        # Add to vector store
-        doc_id = vector_store.add_document(document_text)
-        documents[doc_id] = document_text
-        
-        # Create metadata
-        meta = DocumentMetadata(
-            doc_id=doc_id,
-            owner=current_user.username,
-            source_type="file",
-            filename=filename,
-            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
-            skill_level=extraction.get("skill_level", "unknown"),
-            cluster_id=None,
-            ingested_at=datetime.utcnow().isoformat(),
-            content_length=len(document_text)
-        )
-        metadata[doc_id] = meta
-        
-        # Cluster
-        cluster_id = await find_or_create_cluster(
-            doc_id=doc_id,
-            suggested_cluster=extraction.get("suggested_cluster", "General"),
-            concepts=extraction.get("concepts", [])
-        )
-        metadata[doc_id].cluster_id = cluster_id
-        
-        # Save
-        save_storage_to_db(documents, metadata, clusters, users)
-
-        logger.info(f"User {current_user.username} uploaded file {filename} as doc {doc_id}")
-        
-        return {
-            "document_id": doc_id,
-            "cluster_id": cluster_id,
-            "concepts": extraction.get("concepts", [])
-        }
-
-
-@app.post("/upload_image")
-@limiter.limit("10/minute")
-async def upload_image(
-    req: ImageUpload,
-    request: Request,
-    current_user: User = Depends(get_current_user)
-):
-    """Upload and process image with OCR. Rate limited to 10 uploads per minute."""
-    # Sanitize filename to prevent path traversal attacks
-    filename = sanitize_filename(req.filename)
-
-    # Sanitize optional description
-    description = sanitize_description(req.description)
-
-    try:
-        image_bytes = base64.b64decode(req.content)
-
-        # Validate file size
-        if len(image_bytes) > MAX_UPLOAD_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Image too large. Maximum size is {MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB"
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64: {e}")
-
-    async with storage_lock:
-        # Extract text via OCR
-        extracted_text = image_processor.extract_text_from_image(image_bytes)
-
-        # Get image metadata
-        img_meta = image_processor.get_image_metadata(image_bytes)
-
-        # Combine description + OCR text
-        full_content = ""
-        if description:
-            full_content += f"Description: {description}\n\n"
-        if extracted_text:
-            full_content += f"Extracted text: {extracted_text}\n\n"
-        full_content += f"Image metadata: {img_meta}"
-        
-        # Add to vector store
-        doc_id = vector_store.add_document(full_content)
-        documents[doc_id] = full_content
-        
-        # Save physical image
-        image_path = image_processor.store_image(image_bytes, doc_id)
-        
-        # Extract concepts
-        extraction = await concept_extractor.extract(full_content, "image")
-        
-        # Create metadata
-        meta = DocumentMetadata(
-            doc_id=doc_id,
-            owner=current_user.username,
-            source_type="image",
-            filename=filename,
-            concepts=[Concept(**c) for c in extraction.get("concepts", [])],
-            skill_level=extraction.get("skill_level", "unknown"),
-            cluster_id=None,
-            ingested_at=datetime.utcnow().isoformat(),
-            content_length=len(full_content),
-            image_path=image_path
-        )
-        metadata[doc_id] = meta
-        
-        # Cluster
-        cluster_id = await find_or_create_cluster(
-            doc_id=doc_id,
-            suggested_cluster=extraction.get("suggested_cluster", "Images"),
-            concepts=extraction.get("concepts", [])
-        )
-        metadata[doc_id].cluster_id = cluster_id
-        
-        # Save
-        save_storage_to_db(documents, metadata, clusters, users)
-
-        logger.info(
-            f"User {current_user.username} uploaded image {filename} as doc {doc_id} "
-            f"(OCR: {len(extracted_text)} chars)"
-        )
-        
-        return {
-            "document_id": doc_id,
-            "cluster_id": cluster_id,
-            "ocr_text_length": len(extracted_text),
-            "image_path": image_path,
-            "concepts": extraction.get("concepts", [])
-        }
-
-# =============================================================================
-# Cluster Endpoints
-# =============================================================================
-
-@app.get("/clusters")
-async def get_clusters(
-    current_user: User = Depends(get_current_user)
-):
-    """Get user's clusters."""
-    user_clusters = []
-    
-    for cluster_id, cluster in clusters.items():
-        # Check if any docs in cluster belong to user
-        has_user_docs = any(
-            metadata.get(doc_id) and metadata[doc_id].owner == current_user.username
-            for doc_id in cluster.doc_ids
-        )
-        
-        if has_user_docs:
-            user_clusters.append(cluster.dict())
-    
-    return {
-        "clusters": user_clusters,
-        "total": len(user_clusters)
-    }
-
-# =============================================================================
-# Search Endpoints
-# =============================================================================
-
-@app.get("/search_full")
-@limiter.limit("30/minute")
-async def search_full_content(
-    q: str,
-    top_k: int = 10,
-    cluster_id: Optional[int] = None,
-    full_content: bool = False,
-    source_type: Optional[str] = None,
-    skill_level: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    request: Request = None,
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Search documents with optional filters (Phase 4). Rate limited to 30 searches per minute.
-
-    Filters:
-    - source_type: Filter by source (text, url, pdf, etc.)
-    - skill_level: Filter by skill level (beginner, intermediate, advanced)
-    - date_from/date_to: Filter by ingestion date (ISO format)
-    - cluster_id: Filter by cluster
-    - full_content: Return full content or 500-char snippet
-
-    By default returns 500-char snippets for performance.
-    """
-    # Validate top_k parameter
-    top_k = validate_positive_integer(top_k, "top_k", max_value=50)
-    if top_k < 1:
-        top_k = 10
-
-    # Get user's documents
-    user_doc_ids = [
-        doc_id for doc_id, meta in metadata.items()
-        if meta.owner == current_user.username
-    ]
-
-    if not user_doc_ids:
-        return {"results": [], "grouped_by_cluster": {}}
-
-    # Apply filters
-    filtered_ids = user_doc_ids.copy()
-
-    # Filter by cluster
-    if cluster_id is not None:
-        filtered_ids = [
-            doc_id for doc_id in filtered_ids
-            if metadata[doc_id].cluster_id == cluster_id
-        ]
-
-    # Filter by source type
-    if source_type:
-        filtered_ids = [
-            doc_id for doc_id in filtered_ids
-            if metadata[doc_id].source_type == source_type
-        ]
-
-    # Filter by skill level
-    if skill_level:
-        filtered_ids = [
-            doc_id for doc_id in filtered_ids
-            if metadata[doc_id].skill_level == skill_level
-        ]
-
-    # Filter by date range
-    if date_from or date_to:
-        date_filtered = []
-        for doc_id in filtered_ids:
-            meta = metadata[doc_id]
-            if not meta.ingested_at:
-                continue
-
-            try:
-                doc_date = datetime.fromisoformat(meta.ingested_at.replace('Z', '+00:00'))
-
-                if date_from:
-                    from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-                    if doc_date < from_date:
-                        continue
-
-                if date_to:
-                    to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-                    if doc_date > to_date:
-                        continue
-
-                date_filtered.append(doc_id)
-            except:
-                # Skip documents with invalid dates
-                continue
-
-        filtered_ids = date_filtered
-
-    if not filtered_ids:
-        return {"results": [], "grouped_by_cluster": {}, "filters_applied": {
-            "source_type": source_type,
-            "skill_level": skill_level,
-            "date_from": date_from,
-            "date_to": date_to,
-            "cluster_id": cluster_id
-        }}
-
-    # Search
-    search_results = vector_store.search(
-        query=q,
-        top_k=top_k,
-        allowed_doc_ids=filtered_ids
-    )
-
-    # Build response with metadata
-    results = []
-    cluster_groups = {}
-
-    for doc_id, score, snippet in search_results:
-        meta = metadata[doc_id]
-        cluster = clusters.get(meta.cluster_id) if meta.cluster_id else None
-
-        # Return full content or snippet based on parameter
-        if full_content:
-            content = documents[doc_id]
-        else:
-            # Return 500 char snippet for performance
-            doc_text = documents[doc_id]
-            content = doc_text[:500] + ("..." if len(doc_text) > 500 else "")
-
-        results.append({
-            "doc_id": doc_id,
-            "score": score,
-            "content": content,  # Snippet or full content based on parameter
-            "metadata": meta.dict(),
-            "cluster": cluster.dict() if cluster else None
-        })
-
-        # Group by cluster
-        if meta.cluster_id:
-            if meta.cluster_id not in cluster_groups:
-                cluster_groups[meta.cluster_id] = []
-            cluster_groups[meta.cluster_id].append(doc_id)
-
-    return {
-        "results": results,
-        "grouped_by_cluster": cluster_groups,
-        "filters_applied": {
-            "source_type": source_type,
-            "skill_level": skill_level,
-            "date_from": date_from,
-            "date_to": date_to,
-            "cluster_id": cluster_id
-        },
-        "total_results": len(results)
-    }
-
-# =============================================================================
-# Build Suggestion Endpoint
-# =============================================================================
-
-@app.post("/what_can_i_build")
-@limiter.limit("3/minute")
-async def what_can_i_build(
-    req: BuildSuggestionRequest,
-    request: Request,
-    current_user: User = Depends(get_current_user)
-):
-    """Analyze knowledge bank and suggest viable projects. Rate limited to 3 requests per minute."""
-    # Validate max_suggestions parameter
-    max_suggestions = validate_positive_integer(req.max_suggestions, "max_suggestions", max_value=10)
-    if max_suggestions < 1:
-        max_suggestions = 5
-
-    # Filter to user's content
-    user_clusters = {
-        cid: cluster for cid, cluster in clusters.items()
-        if any(metadata[did].owner == current_user.username for did in cluster.doc_ids)
-    }
-    
-    user_metadata = {
-        did: meta for did, meta in metadata.items()
-        if meta.owner == current_user.username
-    }
-    
-    user_documents = {
-        did: doc for did, doc in documents.items()
-        if did in user_metadata
-    }
-    
-    if not user_clusters:
-        return {
-            "suggestions": [],
-            "knowledge_summary": {
-                "total_docs": 0,
-                "total_clusters": 0,
-                "clusters": []
-            }
-        }
-    
-    # Generate suggestions
-    suggestions = await build_suggester.analyze_knowledge_bank(
-        clusters=user_clusters,
-        metadata=user_metadata,
-        documents=user_documents,
-        max_suggestions=max_suggestions
-    )
-    
-    return {
-        "suggestions": [s.dict() for s in suggestions],
-        "knowledge_summary": {
-            "total_docs": len(user_documents),
-            "total_clusters": len(user_clusters),
-            "clusters": [c.dict() for c in user_clusters.values()]
-        }
-    }
-
-# =============================================================================
-# AI Generation Endpoint (existing)
-# =============================================================================
-
-@app.post("/generate")
-@limiter.limit("5/minute")
-async def generate_content(
-    req: GenerationRequest,
-    request: Request,
-    current_user: User = Depends(get_current_user)
-):
-    """Generate AI content with RAG. Rate limited to 5 requests per minute."""
-    if not REAL_AI_AVAILABLE:
-        return {"response": "AI generation not available - API keys not configured"}
-    
-    # Get user's documents for RAG
-    user_doc_ids = [
-        doc_id for doc_id, meta in metadata.items()
-        if meta.owner == current_user.username
-    ]
-    
-    try:
-        response_text = await generate_with_rag(
-            prompt=req.prompt,
-            model=req.model,
-            vector_store=vector_store,
-            allowed_doc_ids=user_doc_ids,
-            documents=documents
-        )
-        return {"response": response_text}
-    except Exception as e:
-        logger.error(f"Generation failed: {e}")
-        return {"response": f"Error: {str(e)}"}
-
-# =============================================================================
-# Document Management (Phase 4)
-# =============================================================================
-
-@app.get("/documents/{doc_id}")
-async def get_document(
-    doc_id: int,
-    user: User = Depends(get_current_user)
-):
-    """Get a single document with metadata."""
-    if doc_id not in documents:
-        raise HTTPException(404, f"Document {doc_id} not found")
-
-    meta = metadata.get(doc_id)
-    cluster_info = None
-
-    if meta and meta.cluster_id is not None:
-        cluster = clusters.get(meta.cluster_id)
-        if cluster:
-            cluster_info = {
-                "id": cluster.id,
-                "name": cluster.name
-            }
-
-    return {
-        "doc_id": doc_id,
-        "content": documents[doc_id],
-        "metadata": meta.dict() if meta else None,
-        "cluster": cluster_info
-    }
-
-
-@app.delete("/documents/{doc_id}")
-async def delete_document(
-    doc_id: int,
-    request: Request,
-    user: User = Depends(get_current_user)
-):
-    """Delete a document from the knowledge bank."""
-    if doc_id not in documents:
-        raise HTTPException(404, f"Document {doc_id} not found")
-
-    # Remove from documents and metadata
-    del documents[doc_id]
-    meta = metadata.pop(doc_id, None)
-
-    # Remove from vector store (if it has a remove method)
-    # Note: Current VectorStore doesn't have remove, but we'll handle this gracefully
-
-    # Remove from cluster
-    cluster_id = meta.cluster_id if meta else None
-    if meta and meta.cluster_id is not None:
-        cluster = clusters.get(meta.cluster_id)
-        if cluster and doc_id in cluster.doc_ids:
-            cluster.doc_ids.remove(doc_id)
-
-    # Save to disk
-    save_storage_to_db(documents, metadata, clusters, users)
-
-    # Structured logging with request context (Phase 5)
-    logger.info(
-        f"[{request.state.request_id}] User {user.username} deleted document {doc_id} "
-        f"(cluster: {cluster_id}, source: {meta.source_type if meta else 'unknown'})"
-    )
-    return {"message": f"Document {doc_id} deleted successfully"}
-
-
-@app.put("/documents/{doc_id}/metadata")
-async def update_document_metadata(
-    doc_id: int,
-    updates: dict,
-    user: User = Depends(get_current_user)
-):
-    """Update document metadata (cluster_id, primary_topic, etc)."""
-    if doc_id not in documents:
-        raise HTTPException(404, f"Document {doc_id} not found")
-
-    if doc_id not in metadata:
-        raise HTTPException(404, f"Metadata for document {doc_id} not found")
-
-    meta = metadata[doc_id]
-
-    # Update allowed fields
-    if 'primary_topic' in updates:
-        meta.primary_topic = updates['primary_topic']
-
-    if 'skill_level' in updates:
-        if updates['skill_level'] in ['beginner', 'intermediate', 'advanced']:
-            meta.skill_level = updates['skill_level']
-
-    if 'cluster_id' in updates:
-        new_cluster_id = updates['cluster_id']
-        old_cluster_id = meta.cluster_id
-
-        # Remove from old cluster
-        if old_cluster_id is not None and old_cluster_id in clusters:
-            old_cluster = clusters[old_cluster_id]
-            if doc_id in old_cluster.doc_ids:
-                old_cluster.doc_ids.remove(doc_id)
-
-        # Add to new cluster
-        if new_cluster_id is not None:
-            if new_cluster_id not in clusters:
-                raise HTTPException(404, f"Cluster {new_cluster_id} not found")
-            clusters[new_cluster_id].doc_ids.append(doc_id)
-
-        meta.cluster_id = new_cluster_id
-
-    # Save to disk
-    save_storage_to_db(documents, metadata, clusters, users)
-
-    logger.info(f"Updated metadata for document {doc_id}")
-    return {"message": "Metadata updated", "metadata": meta.dict()}
-
-
-# =============================================================================
-# Cluster Management (Phase 4)
-# =============================================================================
-
-@app.put("/clusters/{cluster_id}")
-async def update_cluster(
-    cluster_id: int,
-    updates: dict,
-    user: User = Depends(get_current_user)
-):
-    """Update cluster information (rename, etc)."""
-    if cluster_id not in clusters:
-        raise HTTPException(404, f"Cluster {cluster_id} not found")
-
-    cluster = clusters[cluster_id]
-
-    # Update allowed fields
-    if 'name' in updates:
-        # Sanitize cluster name
-        cluster.name = sanitize_cluster_name(updates['name'])
-
-    if 'skill_level' in updates:
-        if updates['skill_level'] in ['beginner', 'intermediate', 'advanced', 'unknown']:
-            cluster.skill_level = updates['skill_level']
-
-    # Save to disk
-    save_storage_to_db(documents, metadata, clusters, users)
-
-    logger.info(f"Updated cluster {cluster_id}: {cluster.name}")
-    return {"message": "Cluster updated", "cluster": cluster.dict()}
-
-
-@app.get("/export/cluster/{cluster_id}")
-async def export_cluster(
-    cluster_id: int,
-    format: str = "json",
-    user: User = Depends(get_current_user)
-):
-    """Export a cluster as JSON or Markdown."""
-    if cluster_id not in clusters:
-        raise HTTPException(404, f"Cluster {cluster_id} not found")
-
-    cluster = clusters[cluster_id]
-
-    # Gather all documents in cluster
-    cluster_docs = []
-    for doc_id in cluster.doc_ids:
-        if doc_id in documents:
-            meta = metadata.get(doc_id)
-            cluster_docs.append({
-                "doc_id": doc_id,
-                "content": documents[doc_id],
-                "metadata": meta.dict() if meta else None
-            })
-
-    if format == "markdown":
-        # Build markdown export
-        md_content = f"# {cluster.name}\n\n"
-        md_content += f"**Skill Level:** {cluster.skill_level}\n"
-        md_content += f"**Primary Concepts:** {', '.join(cluster.primary_concepts)}\n"
-        md_content += f"**Documents:** {len(cluster_docs)}\n\n"
-        md_content += "---\n\n"
-
-        for doc in cluster_docs:
-            meta = doc['metadata']
-            md_content += f"## Document {doc['doc_id']}\n\n"
-            if meta:
-                md_content += f"**Source:** {meta['source_type']}\n"
-                md_content += f"**Topic:** {meta['primary_topic']}\n"
-                md_content += f"**Concepts:** {', '.join([c['name'] for c in meta['concepts']])}\n\n"
-            md_content += f"{doc['content']}\n\n"
-            md_content += "---\n\n"
-
-        return JSONResponse({
-            "cluster_id": cluster_id,
-            "cluster_name": cluster.name,
-            "format": "markdown",
-            "content": md_content
-        })
-
-    else:  # JSON format
-        return {
-            "cluster_id": cluster_id,
-            "cluster": cluster.dict(),
-            "documents": cluster_docs,
-            "export_date": datetime.utcnow().isoformat()
-        }
-
-
-@app.get("/export/all")
-async def export_all(
-    format: str = "json",
-    user: User = Depends(get_current_user)
-):
-    """Export entire knowledge bank."""
-    all_docs = []
-    for doc_id in sorted(documents.keys()):
-        meta = metadata.get(doc_id)
-        cluster_id = meta.cluster_id if meta else None
-        cluster_name = clusters[cluster_id].name if cluster_id in clusters else None
-
-        all_docs.append({
-            "doc_id": doc_id,
-            "content": documents[doc_id],
-            "metadata": meta.dict() if meta else None,
-            "cluster_name": cluster_name
-        })
-
-    if format == "markdown":
-        md_content = f"# Knowledge Bank Export\n\n"
-        md_content += f"**Export Date:** {datetime.utcnow().isoformat()}\n"
-        md_content += f"**Total Documents:** {len(all_docs)}\n"
-        md_content += f"**Total Clusters:** {len(clusters)}\n\n"
-        md_content += "---\n\n"
-
-        # Group by cluster
-        for cluster in clusters.values():
-            md_content += f"# Cluster: {cluster.name}\n\n"
-            cluster_docs = [d for d in all_docs if d['metadata'] and d['metadata']['cluster_id'] == cluster.id]
-
-            for doc in cluster_docs:
-                meta = doc['metadata']
-                md_content += f"## Document {doc['doc_id']}\n\n"
-                if meta:
-                    md_content += f"**Topic:** {meta['primary_topic']}\n"
-                md_content += f"{doc['content'][:500]}...\n\n"
-                md_content += "---\n\n"
-
-        return JSONResponse({
-            "format": "markdown",
-            "content": md_content
-        })
-
-    else:  # JSON
-        return {
-            "documents": all_docs,
-            "clusters": [c.dict() for c in clusters.values()],
-            "export_date": datetime.utcnow().isoformat(),
-            "total_documents": len(all_docs),
-            "total_clusters": len(clusters)
-        }
-
-
-# =============================================================================
-# Health Check (Enhanced - Phase 5)
-# =============================================================================
-
-@app.get("/health")
+@app.get("/health", tags=["health"])
 async def health_check():
     """
     Enhanced health check endpoint.
@@ -1219,10 +202,10 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "statistics": {
-            "documents": len(documents),
-            "clusters": len(clusters),
-            "users": len(users),
-            "vector_store_size": len(vector_store.docs) if hasattr(vector_store, 'docs') else 0
+            "documents": len(dependencies.documents),
+            "clusters": len(dependencies.clusters),
+            "users": len(dependencies.users),
+            "vector_store_size": len(dependencies.vector_store.docs) if hasattr(dependencies.vector_store, 'docs') else 0
         },
         "dependencies": {}
     }
@@ -1251,17 +234,15 @@ async def health_check():
         health_data["dependencies"]["storage_file_exists"] = "error"
         logger.error(f"Failed to check storage file: {e}")
 
-    # Check OpenAI API (optional - only if we want to be comprehensive)
+    # Check OpenAI API
     try:
-        # Don't actually call API, just check if key is set
         openai_key = os.environ.get('OPENAI_API_KEY')
         health_data["dependencies"]["openai_configured"] = bool(openai_key and openai_key.startswith('sk-'))
     except Exception:
         health_data["dependencies"]["openai_configured"] = False
 
-    # Check database health (Phase 6)
+    # Check database health
     try:
-        from .database import check_database_health
         db_health = check_database_health()
         health_data["dependencies"]["database"] = db_health
     except Exception as e:
@@ -1274,7 +255,7 @@ async def health_check():
     # Overall health status
     all_healthy = all([
         health_data["dependencies"].get("disk_healthy", False),
-        health_data["dependencies"].get("storage_file_exists", False) or health_data["dependencies"].get("database", {}).get("database_connected", False),  # Either file or database
+        health_data["dependencies"].get("storage_file_exists", False) or health_data["dependencies"].get("database", {}).get("database_connected", False),
         health_data["dependencies"].get("openai_configured", False)
     ])
 
@@ -1283,43 +264,13 @@ async def health_check():
 
     return health_data
 
-
 # =============================================================================
-# Analytics Dashboard (Phase 7.1)
+# Mount Static Files
 # =============================================================================
 
-@app.get("/analytics")
-async def get_analytics(
-    time_period: int = 30,
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Get comprehensive analytics for the user's knowledge bank.
-
-    Args:
-        time_period: Number of days for time-series data (default: 30)
-
-    Returns:
-        Complete analytics including:
-        - Overview statistics (total docs, clusters, concepts)
-        - Time-series data (document growth over time)
-        - Distribution metrics (clusters, skill levels, source types)
-        - Top concepts
-        - Recent activity
-    """
-    from .database import get_db_context
-
-    try:
-        with get_db_context() as db:
-            analytics = AnalyticsService(db)
-            data = analytics.get_complete_analytics(
-                username=current_user.username,
-                time_period_days=time_period
-            )
-            return data
-    except Exception as e:
-        logger.error(f"Analytics failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate analytics: {str(e)}"
-        )
+try:
+    static_path = Path(__file__).parent / 'static'
+    if static_path.exists():
+        app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
+except Exception as e:
+    logger.warning(f"Could not mount static files: {e}")

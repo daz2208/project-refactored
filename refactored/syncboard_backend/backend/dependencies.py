@@ -1,108 +1,131 @@
 """
-Dependency injection setup for FastAPI.
+Shared Dependencies for SyncBoard 3.0 Knowledge Bank.
 
-Provides factory functions for creating and sharing service instances.
+Provides:
+- Global state access (documents, metadata, clusters, users)
+- Authentication dependencies (get_current_user)
+- Storage lock for thread safety
+- Service instances
 """
 
 import os
-import logging
-from functools import lru_cache
+import asyncio
+from typing import Dict
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 
-from .repository import KnowledgeBankRepository
+from .models import User, DocumentMetadata, Cluster
+from .vector_store import VectorStore
 from .concept_extractor import ConceptExtractor
+from .clustering import ClusteringEngine
+from .image_processor import ImageProcessor
 from .build_suggester import BuildSuggester
-from .llm_providers import OpenAIProvider
-from .services import DocumentService, SearchService, ClusterService, BuildSuggestionService
-
-logger = logging.getLogger(__name__)
+from .auth import decode_access_token
+from .constants import DEFAULT_VECTOR_DIM
 
 # =============================================================================
-# CONFIGURATION
+# OAuth2 Scheme
 # =============================================================================
 
-STORAGE_PATH = os.environ.get("SYNCBOARD_STORAGE_PATH", "storage.json")
-VECTOR_DIM = int(os.environ.get("SYNCBOARD_VECTOR_DIM", "256"))
-
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # =============================================================================
-# SINGLETON INSTANCES
+# Global State
 # =============================================================================
 
-@lru_cache()
-def get_repository() -> KnowledgeBankRepository:
+# Vector store for semantic search
+vector_store = VectorStore(dim=int(os.environ.get('SYNCBOARD_VECTOR_DIM', str(DEFAULT_VECTOR_DIM))))
+
+# Document storage (in-memory)
+documents: Dict[int, str] = {}
+metadata: Dict[int, DocumentMetadata] = {}
+clusters: Dict[int, Cluster] = {}
+users: Dict[str, str] = {}  # username -> hashed_password
+
+# Storage lock for thread safety
+storage_lock = asyncio.Lock()
+
+# =============================================================================
+# Service Instances
+# =============================================================================
+
+concept_extractor = ConceptExtractor()
+clustering_engine = ClusteringEngine()
+image_processor = ImageProcessor()
+build_suggester = BuildSuggester()
+
+# =============================================================================
+# Authentication Dependency
+# =============================================================================
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
-    Get the repository singleton.
+    Get current user from JWT token.
 
-    Uses lru_cache to ensure only one instance is created.
+    Args:
+        token: JWT token from Authorization header
+
+    Returns:
+        User object with username
+
+    Raises:
+        HTTPException: If token is invalid or user not found
     """
-    logger.info(f"Initializing repository with storage path: {STORAGE_PATH}")
-    return KnowledgeBankRepository(
-        storage_path=STORAGE_PATH,
-        vector_dim=VECTOR_DIM
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
+    try:
+        payload = decode_access_token(token)
+        username = payload.get("sub")
+        if not username or username not in users:
+            raise credentials_exception
+    except Exception:
+        raise credentials_exception
 
+    return User(username=username)
 
-@lru_cache()
-def get_llm_provider() -> OpenAIProvider:
-    """
-    Get the LLM provider singleton.
+# =============================================================================
+# State Access Functions
+# =============================================================================
 
-    Uses lru_cache to ensure connection pooling.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable required")
+def get_documents() -> Dict[int, str]:
+    """Get documents dictionary."""
+    return documents
 
-    logger.info("Initializing OpenAI LLM provider")
-    return OpenAIProvider(api_key=api_key)
+def get_metadata() -> Dict[int, DocumentMetadata]:
+    """Get metadata dictionary."""
+    return metadata
 
+def get_clusters() -> Dict[int, Cluster]:
+    """Get clusters dictionary."""
+    return clusters
 
-@lru_cache()
+def get_users() -> Dict[str, str]:
+    """Get users dictionary."""
+    return users
+
+def get_vector_store() -> VectorStore:
+    """Get vector store instance."""
+    return vector_store
+
+def get_storage_lock() -> asyncio.Lock:
+    """Get storage lock for thread-safe operations."""
+    return storage_lock
+
 def get_concept_extractor() -> ConceptExtractor:
-    """Get the concept extractor singleton."""
-    provider = get_llm_provider()
-    return ConceptExtractor(llm_provider=provider)
+    """Get concept extractor instance."""
+    return concept_extractor
 
+def get_clustering_engine() -> ClusteringEngine:
+    """Get clustering engine instance."""
+    return clustering_engine
 
-@lru_cache()
+def get_image_processor() -> ImageProcessor:
+    """Get image processor instance."""
+    return image_processor
+
 def get_build_suggester() -> BuildSuggester:
-    """Get the build suggester singleton."""
-    provider = get_llm_provider()
-    return BuildSuggester(llm_provider=provider)
-
-
-# =============================================================================
-# SERVICE FACTORIES
-# =============================================================================
-
-def get_document_service() -> DocumentService:
-    """
-    Get document service instance.
-
-    Creates new instance with injected dependencies.
-    """
-    repo = get_repository()
-    extractor = get_concept_extractor()
-    return DocumentService(repository=repo, concept_extractor=extractor)
-
-
-def get_search_service() -> SearchService:
-    """Get search service instance."""
-    repo = get_repository()
-    return SearchService(repository=repo)
-
-
-def get_cluster_service() -> ClusterService:
-    """Get cluster service instance."""
-    repo = get_repository()
-    return ClusterService(repository=repo)
-
-
-def get_build_suggestion_service() -> BuildSuggestionService:
-    """Get build suggestion service instance."""
-    repo = get_repository()
-    suggester = get_build_suggester()
-    return BuildSuggestionService(
-        repository=repo,
-        suggester=suggester
-    )
+    """Get build suggester instance."""
+    return build_suggester
