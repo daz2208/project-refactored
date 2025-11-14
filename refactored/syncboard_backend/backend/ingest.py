@@ -7,11 +7,14 @@ This module provides actual AI-powered content processing:
 - PDF text extraction
 - Audio file transcription
 - Web article extraction
-- ✨ Jupyter notebook extraction (.ipynb) - Phase 1
-- ✨ Source code file processing (Python, JavaScript, etc.) - Phase 1
+- Jupyter notebook extraction (.ipynb) - Phase 1
+- Source code file processing (Python, JavaScript, etc.) - Phase 1
+- ✨ Excel spreadsheet extraction (.xlsx, .xls) - Phase 2
+- ✨ PowerPoint presentation extraction (.pptx) - Phase 2
 
 ✅ FIXED: Added audio compression to handle files over Whisper's 25MB limit
-✨ NEW: Phase 1 expansion adds support for 40+ programming languages and Jupyter notebooks
+✨ Phase 1: 40+ programming languages and Jupyter notebooks
+✨ Phase 2: Office Suite (Excel, PowerPoint)
 
 Dependencies:
     pip install yt-dlp openai anthropic pypdf beautifulsoup4 requests python-docx
@@ -551,8 +554,10 @@ def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
     - Text files (.txt, .md)
     - Audio files (.mp3, .wav, .m4a) - transcription via Whisper
     - Word documents (.docx)
-    - Jupyter notebooks (.ipynb) ✨ NEW
-    - Code files (Python, JavaScript, etc.) ✨ NEW
+    - Jupyter notebooks (.ipynb) - Phase 1
+    - Code files (Python, JavaScript, etc.) - Phase 1
+    - Excel spreadsheets (.xlsx, .xls) ✨ Phase 2
+    - PowerPoint presentations (.pptx) ✨ Phase 2
 
     ✅ Audio files now compressed if over 25MB limit.
 
@@ -596,6 +601,14 @@ def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
     # Word documents
     elif file_ext == '.docx':
         return extract_docx_text(content_bytes)
+
+    # Excel spreadsheets (Phase 2)
+    elif file_ext in ['.xlsx', '.xls']:
+        return extract_excel_text(content_bytes, filename)
+
+    # PowerPoint presentations (Phase 2)
+    elif file_ext == '.pptx':
+        return extract_powerpoint_text(content_bytes, filename)
 
     else:
         raise Exception(f"Unsupported file type: {file_ext}")
@@ -905,3 +918,181 @@ def extract_code_file(content_bytes: bytes, filename: str) -> str:
     )
 
     return result
+
+
+# =============================================================================
+# Phase 2 Expansion: Office Suite (Excel & PowerPoint)
+# =============================================================================
+
+def extract_excel_text(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from Excel spreadsheet (.xlsx, .xls).
+
+    Extracts:
+    - All sheets with names
+    - Cell values (text, numbers, formulas)
+    - Table structure preserved as much as possible
+    - Sheet metadata
+
+    Args:
+        content_bytes: Excel file content
+        filename: Original filename
+
+    Returns:
+        Formatted text with all spreadsheet data
+    """
+    try:
+        from openpyxl import load_workbook
+        import io
+    except ImportError:
+        raise Exception("Install openpyxl: pip install openpyxl")
+
+    try:
+        # Load workbook from bytes
+        wb = load_workbook(io.BytesIO(content_bytes), data_only=True)
+
+        text_parts = [
+            f"EXCEL SPREADSHEET: {filename}",
+            f"Sheets: {len(wb.sheetnames)}",
+            ""
+        ]
+
+        total_rows = 0
+        total_cells = 0
+
+        # Process each sheet
+        for sheet_name in wb.sheetnames:
+            sheet = wb[sheet_name]
+
+            # Get sheet dimensions
+            max_row = sheet.max_row
+            max_col = sheet.max_column
+
+            text_parts.append(f"=== Sheet: {sheet_name} ({max_row} rows × {max_col} cols) ===")
+            text_parts.append("")
+
+            # Extract cell values
+            sheet_rows = []
+            for row in sheet.iter_rows(values_only=True):
+                # Convert row to strings, handling None values
+                row_values = []
+                for cell in row:
+                    if cell is None:
+                        row_values.append("")
+                    elif isinstance(cell, (int, float)):
+                        row_values.append(str(cell))
+                    else:
+                        row_values.append(str(cell))
+
+                # Join with pipe separator for table-like format
+                row_text = " | ".join(row_values)
+
+                # Only add non-empty rows
+                if row_text.strip(" |"):
+                    sheet_rows.append(row_text)
+                    total_cells += len([c for c in row_values if c])
+
+            text_parts.extend(sheet_rows)
+            text_parts.append("")  # Blank line between sheets
+
+            total_rows += len(sheet_rows)
+
+        # Add summary
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted Excel: {filename} "
+            f"({len(wb.sheetnames)} sheets, {total_rows} rows, {total_cells} cells)"
+        )
+
+        return result
+
+    except Exception as e:
+        raise Exception(f"Excel extraction failed: {e}")
+
+
+def extract_powerpoint_text(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from PowerPoint presentation (.pptx).
+
+    Extracts:
+    - All slides with slide numbers
+    - Text from all shapes (titles, content, text boxes)
+    - Speaker notes
+    - Presentation metadata
+
+    Args:
+        content_bytes: PowerPoint file content
+        filename: Original filename
+
+    Returns:
+        Formatted text with all presentation content
+    """
+    try:
+        from pptx import Presentation
+        import io
+    except ImportError:
+        raise Exception("Install python-pptx: pip install python-pptx")
+
+    try:
+        # Load presentation from bytes
+        prs = Presentation(io.BytesIO(content_bytes))
+
+        text_parts = [
+            f"POWERPOINT PRESENTATION: {filename}",
+            f"Slides: {len(prs.slides)}",
+            ""
+        ]
+
+        total_shapes = 0
+        total_notes = 0
+
+        # Process each slide
+        for i, slide in enumerate(prs.slides, 1):
+            text_parts.append(f"--- Slide {i} ---")
+            text_parts.append("")
+
+            slide_texts = []
+
+            # Extract text from shapes
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    slide_texts.append(shape.text)
+                    total_shapes += 1
+
+                # Handle tables
+                if shape.has_table:
+                    table = shape.table
+                    for row in table.rows:
+                        row_text = " | ".join([cell.text for cell in row.cells])
+                        if row_text.strip():
+                            slide_texts.append(f"[Table] {row_text}")
+
+            # Add slide content
+            if slide_texts:
+                text_parts.extend(slide_texts)
+            else:
+                text_parts.append("[Empty slide]")
+
+            # Extract speaker notes
+            if slide.has_notes_slide:
+                notes_frame = slide.notes_slide.notes_text_frame
+                if notes_frame.text:
+                    text_parts.append("")
+                    text_parts.append(f"[Speaker Notes]")
+                    text_parts.append(notes_frame.text)
+                    total_notes += 1
+
+            text_parts.append("")  # Blank line between slides
+
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted PowerPoint: {filename} "
+            f"({len(prs.slides)} slides, {total_shapes} text shapes, {total_notes} notes)"
+        )
+
+        return result
+
+    except Exception as e:
+        raise Exception(f"PowerPoint extraction failed: {e}")

@@ -32,6 +32,10 @@ pypdf
 beautifulsoup4
 python-docx
 
+# Office Suite (Phase 2)
+openpyxl  # Excel spreadsheets (.xlsx)
+python-pptx  # PowerPoint presentations (.pptx)
+
 # Image processing
 Pillow
 pytesseract
