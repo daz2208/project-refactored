@@ -408,6 +408,7 @@ function displaySearchResults(results, searchQuery = '') {
                     <strong>Doc ${r.doc_id}</strong>
                     <div style="display: flex; gap: 8px;">
                         <span style="color: #888;">Score: ${r.score.toFixed(3)}</span>
+                        <button class="icon-btn" onclick="showTagMenuForDocument(${r.doc_id})" title="Add Tag" style="background: none; border: none; cursor: pointer; font-size: 1.2rem;">🏷️</button>
                         <button class="icon-btn" onclick="deleteDocument(${r.doc_id})" title="Delete" style="background: none; border: none; cursor: pointer; font-size: 1.2rem;">🗑️</button>
                     </div>
                 </div>
@@ -416,6 +417,9 @@ function displaySearchResults(results, searchQuery = '') {
                     Cluster: ${r.cluster?.name || 'None'} •
                     ${r.metadata.skill_level}
                 </p>
+                <div id="doc-tags-${r.doc_id}" class="document-tags" style="margin: 8px 0;">
+                    <!-- Tags will be loaded here -->
+                </div>
                 <div class="concepts-list">
                     ${r.metadata.concepts.slice(0, 5).map(c =>
                         `<span class="concept-tag">${c.name}</span>`
@@ -427,6 +431,11 @@ function displaySearchResults(results, searchQuery = '') {
                 </details>
             </div>
         `).join('');
+
+    // Load tags for each document
+    results.forEach(r => {
+        loadDocumentTags(r.doc_id);
+    });
 }
 
 function highlightSearchTerms(text, query) {
@@ -576,6 +585,70 @@ function displayBuildSuggestions(suggestions, summary) {
             </details>
         </div>
     `).join('');
+}
+
+// =============================================================================
+// AI GENERATION (RAG)
+// =============================================================================
+
+function showAIGenerator() {
+    const panel = document.getElementById('aiGeneratorPanel');
+    panel.classList.remove('hidden');
+    document.getElementById('aiPrompt').focus();
+}
+
+function hideAIGenerator() {
+    const panel = document.getElementById('aiGeneratorPanel');
+    panel.classList.add('hidden');
+    document.getElementById('aiResponseArea').style.display = 'none';
+    document.getElementById('aiPrompt').value = '';
+    document.getElementById('aiResponse').textContent = '';
+}
+
+async function generateWithAI(event) {
+    const button = event ? event.target : null;
+    const prompt = document.getElementById('aiPrompt').value.trim();
+    const model = document.getElementById('aiModelSelect').value;
+
+    if (!prompt) {
+        showToast('Please enter a prompt', 'error');
+        return;
+    }
+
+    if (button) setButtonLoading(button, true);
+
+    try {
+        const res = await fetch(`${API_BASE}/generate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ prompt, model })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            displayAIResponse(data.response);
+        } else {
+            const errorMsg = await getErrorMessage(res);
+            showToast(errorMsg, 'error');
+        }
+    } catch (e) {
+        showToast('AI Generation error: ' + e.message, 'error');
+    } finally {
+        if (button) setButtonLoading(button, false, 'Generate');
+    }
+}
+
+function displayAIResponse(response) {
+    const responseArea = document.getElementById('aiResponseArea');
+    const responseDiv = document.getElementById('aiResponse');
+
+    responseDiv.textContent = response;
+    responseArea.style.display = 'block';
+
+    showToast('AI response generated successfully', 'success');
 }
 
 // =============================================================================
@@ -1338,6 +1411,130 @@ async function deleteTag(tagId, tagName) {
 
     } catch (error) {
         showToast('Failed to delete tag: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// Document Tagging Functions
+// =============================================================================
+
+async function loadDocumentTags(docId) {
+    try {
+        const response = await fetch(`${API_BASE}/documents/${docId}/tags`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            console.error('Failed to load document tags');
+            return;
+        }
+
+        const data = await response.json();
+        renderDocumentTags(docId, data.tags || []);
+
+    } catch (error) {
+        console.error('Failed to load document tags:', error);
+    }
+}
+
+function renderDocumentTags(docId, tags) {
+    const container = document.getElementById(`doc-tags-${docId}`);
+    if (!container) return;
+
+    if (tags.length === 0) {
+        container.innerHTML = '<span style="color: #666; font-size: 0.85rem;">No tags</span>';
+        return;
+    }
+
+    container.innerHTML = tags.map(tag => `
+        <span class="tag-badge" style="background: ${tag.color || '#00d4ff'}; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem; margin-right: 5px; display: inline-flex; align-items: center; gap: 5px;">
+            ${tag.name}
+            <button onclick="removeTagFromDocument(${docId}, ${tag.id}, '${tag.name}')" style="background: none; border: none; color: white; cursor: pointer; font-size: 1rem; padding: 0; line-height: 1;">×</button>
+        </span>
+    `).join('');
+}
+
+async function showTagMenuForDocument(docId) {
+    try {
+        const response = await fetch(`${API_BASE}/tags`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            showToast('Failed to load tags', 'error');
+            return;
+        }
+
+        const data = await response.json();
+        const tags = data.tags || [];
+
+        if (tags.length === 0) {
+            showToast('No tags available. Create tags first in the Advanced tab.', 'info');
+            return;
+        }
+
+        // Create simple menu with available tags
+        const tagOptions = tags.map(tag => `${tag.id}: ${tag.name}`).join('\n');
+        const tagIdStr = prompt(`Select tag to add to document ${docId}:\n\n${tagOptions}\n\nEnter tag ID:`);
+
+        if (tagIdStr) {
+            const tagId = parseInt(tagIdStr);
+            if (isNaN(tagId)) {
+                showToast('Invalid tag ID', 'error');
+                return;
+            }
+
+            await addTagToDocument(docId, tagId);
+        }
+
+    } catch (error) {
+        showToast('Failed to show tag menu: ' + error.message, 'error');
+    }
+}
+
+async function addTagToDocument(docId, tagId) {
+    try {
+        const response = await fetch(`${API_BASE}/documents/${docId}/tags/${tagId}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast('Tag added to document', 'success');
+        loadDocumentTags(docId);
+
+    } catch (error) {
+        showToast('Failed to add tag: ' + error.message, 'error');
+    }
+}
+
+async function removeTagFromDocument(docId, tagId, tagName) {
+    if (!confirm(`Remove tag "${tagName}" from document ${docId}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/documents/${docId}/tags/${tagId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorMsg = await getErrorMessage(response);
+            showToast(errorMsg, 'error');
+            return;
+        }
+
+        showToast('Tag removed from document', 'success');
+        loadDocumentTags(docId);
+
+    } catch (error) {
+        showToast('Failed to remove tag: ' + error.message, 'error');
     }
 }
 

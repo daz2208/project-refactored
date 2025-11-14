@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 
-from ..models import User
+from ..models import User, RelationshipCreate
 from ..dependencies import get_current_user
 from ..database import get_db_context
 from ..advanced_features_service import DocumentRelationshipsService
@@ -21,18 +21,14 @@ router = APIRouter(tags=["relationships"])
 @router.post("/documents/{source_doc_id}/relationships")
 async def add_document_relationship(
     source_doc_id: int,
-    target_doc_id: int,
-    relationship_type: str = "related",
-    strength: Optional[float] = None,
+    rel_data: RelationshipCreate,
     current_user: User = Depends(get_current_user)
 ):
     """Create a relationship between two documents.
 
     Args:
         source_doc_id: Source document ID
-        target_doc_id: Target document ID
-        relationship_type: Type of relationship (related, prerequisite, followup, alternative, supersedes)
-        strength: Optional strength score (0-1) for AI-discovered relationships
+        rel_data: Relationship data (target_doc_id, relationship_type, strength)
         current_user: Authenticated user
 
     Returns:
@@ -42,8 +38,11 @@ async def add_document_relationship(
         with get_db_context() as db:
             rel_service = DocumentRelationshipsService(db)
             result = rel_service.add_relationship(
-                source_doc_id, target_doc_id, relationship_type,
-                current_user.username, strength
+                source_doc_id,
+                rel_data.target_doc_id,
+                rel_data.relationship_type,
+                current_user.username,
+                rel_data.strength
             )
             return result
     except ValueError as e:
