@@ -29,6 +29,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     tesseract-ocr \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder

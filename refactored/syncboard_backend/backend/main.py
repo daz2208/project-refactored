@@ -33,6 +33,8 @@ from fastapi.security import OAuth2PasswordBearer
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from passlib.context import CryptContext
+from jose import JWTError, jwt
 import logging
 
 from .models import (
@@ -71,10 +73,6 @@ except ImportError as e:
     REAL_AI_AVAILABLE = False
     print(f"[WARNING] Real AI not available: {e}")
 
-import json
-import hmac
-import hashlib
-
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -92,6 +90,12 @@ ALLOWED_ORIGINS = os.environ.get('SYNCBOARD_ALLOWED_ORIGINS', '*')
 
 # File upload limits (50MB max)
 MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
+
+# Password hashing configuration (bcrypt)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# JWT algorithm
+ALGORITHM = "HS256"
 
 # =============================================================================
 # FastAPI Application
@@ -214,41 +218,72 @@ except Exception as e:
 # =============================================================================
 
 def hash_password(password: str) -> str:
-    """Hash password using PBKDF2."""
-    salt = SECRET_KEY.encode('utf-8')
-    return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000).hex()
+    """
+    Hash password using bcrypt with automatic per-user salt generation.
+
+    Security improvements over previous implementation:
+    - Each password gets a unique salt (prevents rainbow table attacks)
+    - Bcrypt is designed for password hashing (slow by design)
+    - Automatically handles salt generation and verification
+    """
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Verify a password against its hash.
+
+    Args:
+        plain_password: The plain text password to verify
+        hashed_password: The bcrypt hash to check against
+
+    Returns:
+        True if password matches, False otherwise
+    """
+    return pwd_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(data: dict) -> str:
-    """Create JWT token."""
+    """
+    Create a secure JWT access token using python-jose.
+
+    Security improvements over previous implementation:
+    - Uses industry-standard JWT library (python-jose)
+    - Automatic expiration handling
+    - Prevents timing attacks
+    - Standard JWT format (compatible with JWT.io, etc.)
+
+    Args:
+        data: Dictionary with user data (e.g., {"sub": "username"})
+
+    Returns:
+        JWT token string
+    """
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": int(expire.timestamp())})
-    
-    payload = json.dumps(to_encode).encode('utf-8')
-    signature = hmac.new(SECRET_KEY.encode('utf-8'), payload, hashlib.sha256).hexdigest()
-    
-    token = f"{payload.hex()}.{signature}"
-    return token
+    to_encode.update({"exp": expire})
+
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 
 def decode_access_token(token: str) -> dict:
-    """Decode and verify JWT token."""
+    """
+    Decode and verify JWT token using python-jose.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        Decoded token data
+
+    Raises:
+        JWTError: If token is invalid or expired
+    """
     try:
-        payload_hex, signature = token.split('.')
-        payload = bytes.fromhex(payload_hex)
-        
-        expected_sig = hmac.new(SECRET_KEY.encode('utf-8'), payload, hashlib.sha256).hexdigest()
-        if signature != expected_sig:
-            raise ValueError('Invalid signature')
-        
-        data = json.loads(payload.decode('utf-8'))
-        exp = data.get('exp')
-        if exp and exp < int(datetime.utcnow().timestamp()):
-            raise ValueError('Token expired')
-        
-        return data
-    except Exception:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
         raise ValueError('Invalid token')
 
 
@@ -290,9 +325,13 @@ async def create_user(request: Request, user_create: UserCreate) -> User:
 @app.post("/token", response_model=Token)
 @limiter.limit("5/minute")
 async def login(request: Request, user_login: UserLogin) -> Token:
-    """Login and get token. Rate limited to 5 attempts per minute."""
+    """
+    Login and get JWT token. Rate limited to 5 attempts per minute.
+
+    Security: Uses bcrypt password verification (timing-attack resistant).
+    """
     stored_hash = users.get(user_login.username)
-    if not stored_hash or stored_hash != hash_password(user_login.password):
+    if not stored_hash or not verify_password(user_login.password, stored_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
@@ -340,12 +379,13 @@ async def find_or_create_cluster(
 # =============================================================================
 
 @app.post("/upload_text")
+@limiter.limit("10/minute")
 async def upload_text_content(
     req: TextUpload,
     request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload plain text content."""
+    """Upload plain text content. Rate limited to 10 uploads per minute."""
     if not req.content or not req.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
@@ -395,11 +435,13 @@ async def upload_text_content(
 
 
 @app.post("/upload")
+@limiter.limit("5/minute")
 async def upload_url(
     doc: DocumentUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload document via URL (YouTube, web article, etc)."""
+    """Upload document via URL (YouTube, web article, etc). Rate limited to 5 uploads per minute."""
     try:
         document_text = ingest.download_url(str(doc.url))
     except Exception as exc:
@@ -448,11 +490,13 @@ async def upload_url(
 
 
 @app.post("/upload_file")
+@limiter.limit("5/minute")
 async def upload_file(
     req: FileBytesUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload file (PDF, audio, etc) as base64."""
+    """Upload file (PDF, audio, etc) as base64. Rate limited to 5 uploads per minute."""
     try:
         file_bytes = base64.b64decode(req.content)
 
@@ -512,11 +556,13 @@ async def upload_file(
 
 
 @app.post("/upload_image")
+@limiter.limit("10/minute")
 async def upload_image(
     req: ImageUpload,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Upload and process image with OCR."""
+    """Upload and process image with OCR. Rate limited to 10 uploads per minute."""
     try:
         image_bytes = base64.b64decode(req.content)
 
@@ -626,6 +672,7 @@ async def get_clusters(
 # =============================================================================
 
 @app.get("/search_full")
+@limiter.limit("30/minute")
 async def search_full_content(
     q: str,
     top_k: int = 10,
@@ -635,10 +682,11 @@ async def search_full_content(
     skill_level: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    request: Request = None,
     current_user: User = Depends(get_current_user)
 ):
     """
-    Search documents with optional filters (Phase 4).
+    Search documents with optional filters (Phase 4). Rate limited to 30 searches per minute.
 
     Filters:
     - source_type: Filter by source (text, url, pdf, etc.)
@@ -777,11 +825,13 @@ async def search_full_content(
 # =============================================================================
 
 @app.post("/what_can_i_build")
+@limiter.limit("3/minute")
 async def what_can_i_build(
     req: BuildSuggestionRequest,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Analyze knowledge bank and suggest viable projects."""
+    """Analyze knowledge bank and suggest viable projects. Rate limited to 3 requests per minute."""
     max_suggestions = req.max_suggestions
     if max_suggestions < 1 or max_suggestions > 10:
         max_suggestions = 5
@@ -834,11 +884,13 @@ async def what_can_i_build(
 # =============================================================================
 
 @app.post("/generate")
+@limiter.limit("5/minute")
 async def generate_content(
     req: GenerationRequest,
+    request: Request,
     current_user: User = Depends(get_current_user)
 ):
-    """Generate AI content with RAG."""
+    """Generate AI content with RAG. Rate limited to 5 requests per minute."""
     if not REAL_AI_AVAILABLE:
         return {"response": "AI generation not available - API keys not configured"}
     

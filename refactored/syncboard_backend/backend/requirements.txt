@@ -16,7 +16,7 @@ alembic
 # Authentication
 passlib
 bcrypt
-pyjwt
+python-jose[cryptography]
 
 # AI API clients
 openai
