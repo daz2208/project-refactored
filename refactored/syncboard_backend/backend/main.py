@@ -34,7 +34,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 # Import routers
-from .routers import auth, uploads, search, clusters, documents, build_suggestions, analytics, ai_generation
+from .routers import (
+    auth, uploads, search, clusters, documents, build_suggestions,
+    analytics, ai_generation, duplicates, tags, saved_searches, relationships
+)
 
 # Import dependencies and shared state
 from . import dependencies
@@ -205,6 +208,18 @@ app.include_router(analytics.router)
 
 # AI generation endpoints
 app.include_router(ai_generation.router)
+
+# Phase 7.2: Duplicate detection endpoints
+app.include_router(duplicates.router)
+
+# Phase 7.3: Tags endpoints
+app.include_router(tags.router)
+
+# Phase 7.4: Saved searches endpoints
+app.include_router(saved_searches.router)
+
+# Phase 7.5: Document relationships endpoints
+app.include_router(relationships.router)
 
 # =============================================================================
 # Health Check Endpoint
