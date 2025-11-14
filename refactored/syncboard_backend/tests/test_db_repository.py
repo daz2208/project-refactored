@@ -90,7 +90,7 @@ def sample_metadata(sample_user, sample_cluster):
         ],
         skill_level="intermediate",
         cluster_id=sample_cluster.id,
-        ingested_at="2025-01-01T00:00:00",  # Fixed timestamp for testing
+        ingested_at="2025-01-01T00:00:00",  # Fixed timestamp for testing (ISO string)
         content_length=100
     )
 
