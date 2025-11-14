@@ -7,11 +7,17 @@ This module provides actual AI-powered content processing:
 - PDF text extraction
 - Audio file transcription
 - Web article extraction
+- Jupyter notebook extraction (.ipynb) - Phase 1
+- Source code file processing (Python, JavaScript, etc.) - Phase 1
+- ✨ Excel spreadsheet extraction (.xlsx, .xls) - Phase 2
+- ✨ PowerPoint presentation extraction (.pptx) - Phase 2
 
 ✅ FIXED: Added audio compression to handle files over Whisper's 25MB limit
+✨ Phase 1: 40+ programming languages and Jupyter notebooks
+✨ Phase 2: Office Suite (Excel, PowerPoint)
 
 Dependencies:
-    pip install yt-dlp openai anthropic pypdf beautifulsoup4 requests
+    pip install yt-dlp openai anthropic pypdf beautifulsoup4 requests python-docx
 """
 
 import os
@@ -482,31 +488,103 @@ CONTENT:
         raise Exception(f"Failed to extract web content: {e}")
 
 
+# =============================================================================
+# Code File Extensions Map (Phase 1 Expansion)
+# =============================================================================
+
+CODE_EXTENSIONS = {
+    # Programming languages
+    '.py': 'Python',
+    '.js': 'JavaScript',
+    '.ts': 'TypeScript',
+    '.jsx': 'JavaScript React',
+    '.tsx': 'TypeScript React',
+    '.java': 'Java',
+    '.cpp': 'C++',
+    '.cc': 'C++',
+    '.cxx': 'C++',
+    '.c': 'C',
+    '.h': 'C/C++ Header',
+    '.hpp': 'C++ Header',
+    '.go': 'Go',
+    '.rs': 'Rust',
+    '.rb': 'Ruby',
+    '.php': 'PHP',
+    '.swift': 'Swift',
+    '.kt': 'Kotlin',
+    '.scala': 'Scala',
+    '.r': 'R',
+    '.m': 'MATLAB',
+
+    # Web development
+    '.html': 'HTML',
+    '.css': 'CSS',
+    '.scss': 'SCSS',
+    '.sass': 'Sass',
+    '.vue': 'Vue',
+
+    # Shell & scripts
+    '.sh': 'Shell Script',
+    '.bash': 'Bash Script',
+    '.zsh': 'Zsh Script',
+    '.fish': 'Fish Script',
+    '.ps1': 'PowerShell',
+
+    # Data & config
+    '.sql': 'SQL',
+    '.yaml': 'YAML',
+    '.yml': 'YAML',
+    '.toml': 'TOML',
+    '.xml': 'XML',
+    '.ini': 'INI Config',
+    '.conf': 'Config File',
+
+    # Documentation
+    '.rst': 'reStructuredText',
+    '.tex': 'LaTeX',
+}
+
+
 def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
     """
     Process an uploaded file and extract text.
-    
+
     Supports:
     - PDF files (text extraction)
     - Text files (.txt, .md)
     - Audio files (.mp3, .wav, .m4a) - transcription via Whisper
     - Word documents (.docx)
-    
+    - Jupyter notebooks (.ipynb) - Phase 1
+    - Code files (Python, JavaScript, etc.) - Phase 1
+    - Excel spreadsheets (.xlsx, .xls) - Phase 2
+    - PowerPoint presentations (.pptx) - Phase 2
+    - ZIP archives (.zip) - Phase 3
+    - EPUB books (.epub) - Phase 3
+    - Subtitle files (.srt, .vtt) - Phase 3
+
     ✅ Audio files now compressed if over 25MB limit.
-    
+
     Args:
         filename: Original filename
         content_bytes: File content as bytes
-        
+
     Returns:
         Extracted text content
     """
     file_ext = Path(filename).suffix.lower()
-    
+
     logger.info(f"Processing uploaded file: {filename} ({len(content_bytes)} bytes)")
-    
+
+    # Jupyter notebooks (Phase 1)
+    if file_ext == '.ipynb':
+        return extract_jupyter_notebook(content_bytes, filename)
+
+    # Code files (Phase 1)
+    elif file_ext in CODE_EXTENSIONS:
+        return extract_code_file(content_bytes, filename)
+
     # Text files
-    if file_ext in ['.txt', '.md', '.csv', '.json']:
+    elif file_ext in ['.txt', '.md', '.csv', '.json']:
         try:
             return content_bytes.decode('utf-8')
         except UnicodeDecodeError:
@@ -514,19 +592,39 @@ def ingest_upload_file(filename: str, content_bytes: bytes) -> str:
                 return content_bytes.decode('latin-1')
             except:
                 raise Exception("Failed to decode text file")
-    
+
     # PDF files
     elif file_ext == '.pdf':
         return extract_pdf_text(content_bytes)
-    
+
     # Audio files
     elif file_ext in ['.mp3', '.wav', '.m4a', '.ogg', '.flac']:
         return transcribe_audio_file(content_bytes, filename)
-    
+
     # Word documents
     elif file_ext == '.docx':
         return extract_docx_text(content_bytes)
-    
+
+    # Excel spreadsheets (Phase 2)
+    elif file_ext in ['.xlsx', '.xls']:
+        return extract_excel_text(content_bytes, filename)
+
+    # PowerPoint presentations (Phase 2)
+    elif file_ext == '.pptx':
+        return extract_powerpoint_text(content_bytes, filename)
+
+    # ZIP archives (Phase 3)
+    elif file_ext == '.zip':
+        return extract_zip_archive(content_bytes, filename)
+
+    # EPUB books (Phase 3)
+    elif file_ext == '.epub':
+        return extract_epub_text(content_bytes, filename)
+
+    # Subtitle files (Phase 3)
+    elif file_ext in ['.srt', '.vtt']:
+        return extract_subtitles(content_bytes, filename)
+
     else:
         raise Exception(f"Unsupported file type: {file_ext}")
 
@@ -629,20 +727,758 @@ def extract_docx_text(content_bytes: bytes) -> str:
         import io
     except ImportError:
         raise Exception("Install python-docx: pip install python-docx")
-    
+
     try:
         doc_file = io.BytesIO(content_bytes)
         doc = Document(doc_file)
-        
+
         text_parts = []
         for para in doc.paragraphs:
             if para.text.strip():
                 text_parts.append(para.text)
-        
+
         result = "WORD DOCUMENT\n\n" + "\n\n".join(text_parts)
-        
+
         logger.info(f"Extracted text from Word document: {len(text_parts)} paragraphs")
         return result
-        
+
     except Exception as e:
         raise Exception(f"Word document extraction failed: {e}")
+
+
+# =============================================================================
+# Phase 1 Expansion: Jupyter Notebooks & Code Files
+# =============================================================================
+
+def extract_jupyter_notebook(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract content from Jupyter notebook (.ipynb).
+
+    Extracts:
+    - Code cells with syntax highlighting hints
+    - Markdown cells
+    - Cell outputs (text)
+    - Notebook metadata
+
+    Args:
+        content_bytes: Notebook file content
+        filename: Original filename
+
+    Returns:
+        Formatted text with all notebook content
+    """
+    import json
+
+    try:
+        # Parse notebook JSON
+        notebook = json.loads(content_bytes.decode('utf-8'))
+    except json.JSONDecodeError as e:
+        raise Exception(f"Invalid Jupyter notebook format: {e}")
+    except UnicodeDecodeError as e:
+        raise Exception(f"Failed to decode notebook: {e}")
+
+    # Extract metadata
+    metadata = notebook.get('metadata', {})
+    kernel_info = metadata.get('kernelspec', {})
+    language = kernel_info.get('language', 'unknown')
+    kernel_name = kernel_info.get('display_name', 'Unknown')
+
+    text_parts = [
+        f"JUPYTER NOTEBOOK: {filename}",
+        f"Kernel: {kernel_name}",
+        f"Language: {language}",
+        ""
+    ]
+
+    # Extract cells
+    cells = notebook.get('cells', [])
+    code_cell_count = 0
+    markdown_cell_count = 0
+
+    for i, cell in enumerate(cells, 1):
+        cell_type = cell.get('cell_type', 'unknown')
+        source = cell.get('source', [])
+
+        # Handle source as list or string
+        if isinstance(source, list):
+            source_text = ''.join(source)
+        else:
+            source_text = source
+
+        if not source_text.strip():
+            continue  # Skip empty cells
+
+        if cell_type == 'code':
+            code_cell_count += 1
+            text_parts.append(f"[Code Cell {code_cell_count}]")
+            text_parts.append(source_text)
+
+            # Extract outputs if present
+            outputs = cell.get('outputs', [])
+            for output in outputs:
+                # Text output
+                if 'text' in output:
+                    output_text = output['text']
+                    if isinstance(output_text, list):
+                        output_text = ''.join(output_text)
+                    text_parts.append(f"[Output]\n{output_text}")
+
+                # Data output (e.g., pandas dataframes)
+                elif 'data' in output:
+                    data = output['data']
+                    if 'text/plain' in data:
+                        text_parts.append(f"[Output]\n{data['text/plain']}")
+
+        elif cell_type == 'markdown':
+            markdown_cell_count += 1
+            text_parts.append(f"[Markdown {markdown_cell_count}]")
+            text_parts.append(source_text)
+
+        elif cell_type == 'raw':
+            text_parts.append(f"[Raw Cell {i}]")
+            text_parts.append(source_text)
+
+    result = "\n\n".join(text_parts)
+
+    logger.info(
+        f"Extracted Jupyter notebook: {code_cell_count} code cells, "
+        f"{markdown_cell_count} markdown cells, {len(result)} characters"
+    )
+
+    return result
+
+
+def extract_code_file(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract content from source code file with metadata.
+
+    Provides syntax-aware processing with:
+    - Language detection
+    - Line count statistics
+    - Function/class detection hints
+    - Preserved code formatting
+
+    Args:
+        content_bytes: Source code content
+        filename: Original filename
+
+    Returns:
+        Formatted code with metadata
+    """
+    ext = Path(filename).suffix.lower()
+    language = CODE_EXTENSIONS.get(ext, 'Unknown')
+
+    # Decode content
+    try:
+        code = content_bytes.decode('utf-8')
+    except UnicodeDecodeError:
+        # Try latin-1 as fallback
+        try:
+            code = content_bytes.decode('latin-1', errors='replace')
+            logger.warning(f"Used latin-1 fallback for {filename}")
+        except Exception as e:
+            raise Exception(f"Failed to decode {filename}: {e}")
+
+    # Calculate statistics
+    lines = code.split('\n')
+    total_lines = len(lines)
+
+    # Count non-empty, non-comment lines (rough heuristic)
+    if language == 'Python':
+        code_lines = [l for l in lines if l.strip() and not l.strip().startswith('#')]
+    elif language in ['JavaScript', 'TypeScript', 'Java', 'C', 'C++', 'Go', 'Rust']:
+        code_lines = [l for l in lines if l.strip() and not l.strip().startswith('//')]
+    else:
+        code_lines = [l for l in lines if l.strip()]
+
+    loc = len(code_lines)
+
+    # Detect functions/classes (simple heuristics for common patterns)
+    functions = []
+    classes = []
+
+    if language == 'Python':
+        functions = [l.strip() for l in lines if l.strip().startswith('def ')]
+        classes = [l.strip() for l in lines if l.strip().startswith('class ')]
+    elif language in ['JavaScript', 'TypeScript']:
+        functions = [l.strip() for l in lines if 'function ' in l or '=>' in l]
+        classes = [l.strip() for l in lines if l.strip().startswith('class ')]
+    elif language in ['Java', 'C++', 'C#']:
+        classes = [l.strip() for l in lines if 'class ' in l]
+
+    # Build result
+    text_parts = [
+        f"SOURCE CODE FILE: {filename}",
+        f"Language: {language}",
+        f"Total Lines: {total_lines}",
+        f"Code Lines: {loc}",
+    ]
+
+    if functions:
+        text_parts.append(f"Functions/Methods: {len(functions)}")
+    if classes:
+        text_parts.append(f"Classes: {len(classes)}")
+
+    text_parts.extend([
+        "",
+        "CODE:",
+        code
+    ])
+
+    result = "\n".join(text_parts)
+
+    logger.info(
+        f"Extracted {language} code: {filename} "
+        f"({total_lines} lines, {loc} code lines)"
+    )
+
+    return result
+
+
+# =============================================================================
+# Phase 2 Expansion: Office Suite (Excel & PowerPoint)
+# =============================================================================
+
+def extract_excel_text(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from Excel spreadsheet (.xlsx, .xls).
+
+    Extracts:
+    - All sheets with names
+    - Cell values (text, numbers, formulas)
+    - Table structure preserved as much as possible
+    - Sheet metadata
+
+    Args:
+        content_bytes: Excel file content
+        filename: Original filename
+
+    Returns:
+        Formatted text with all spreadsheet data
+    """
+    try:
+        from openpyxl import load_workbook
+        import io
+    except ImportError:
+        raise Exception("Install openpyxl: pip install openpyxl")
+
+    try:
+        # Load workbook from bytes
+        wb = load_workbook(io.BytesIO(content_bytes), data_only=True)
+
+        text_parts = [
+            f"EXCEL SPREADSHEET: {filename}",
+            f"Sheets: {len(wb.sheetnames)}",
+            ""
+        ]
+
+        total_rows = 0
+        total_cells = 0
+
+        # Process each sheet
+        for sheet_name in wb.sheetnames:
+            sheet = wb[sheet_name]
+
+            # Get sheet dimensions
+            max_row = sheet.max_row
+            max_col = sheet.max_column
+
+            text_parts.append(f"=== Sheet: {sheet_name} ({max_row} rows × {max_col} cols) ===")
+            text_parts.append("")
+
+            # Extract cell values
+            sheet_rows = []
+            for row in sheet.iter_rows(values_only=True):
+                # Convert row to strings, handling None values
+                row_values = []
+                for cell in row:
+                    if cell is None:
+                        row_values.append("")
+                    elif isinstance(cell, (int, float)):
+                        row_values.append(str(cell))
+                    else:
+                        row_values.append(str(cell))
+
+                # Join with pipe separator for table-like format
+                row_text = " | ".join(row_values)
+
+                # Only add non-empty rows
+                if row_text.strip(" |"):
+                    sheet_rows.append(row_text)
+                    total_cells += len([c for c in row_values if c])
+
+            text_parts.extend(sheet_rows)
+            text_parts.append("")  # Blank line between sheets
+
+            total_rows += len(sheet_rows)
+
+        # Add summary
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted Excel: {filename} "
+            f"({len(wb.sheetnames)} sheets, {total_rows} rows, {total_cells} cells)"
+        )
+
+        return result
+
+    except Exception as e:
+        raise Exception(f"Excel extraction failed: {e}")
+
+
+def extract_powerpoint_text(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from PowerPoint presentation (.pptx).
+
+    Extracts:
+    - All slides with slide numbers
+    - Text from all shapes (titles, content, text boxes)
+    - Speaker notes
+    - Presentation metadata
+
+    Args:
+        content_bytes: PowerPoint file content
+        filename: Original filename
+
+    Returns:
+        Formatted text with all presentation content
+    """
+    try:
+        from pptx import Presentation
+        import io
+    except ImportError:
+        raise Exception("Install python-pptx: pip install python-pptx")
+
+    try:
+        # Load presentation from bytes
+        prs = Presentation(io.BytesIO(content_bytes))
+
+        text_parts = [
+            f"POWERPOINT PRESENTATION: {filename}",
+            f"Slides: {len(prs.slides)}",
+            ""
+        ]
+
+        total_shapes = 0
+        total_notes = 0
+
+        # Process each slide
+        for i, slide in enumerate(prs.slides, 1):
+            text_parts.append(f"--- Slide {i} ---")
+            text_parts.append("")
+
+            slide_texts = []
+
+            # Extract text from shapes
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    slide_texts.append(shape.text)
+                    total_shapes += 1
+
+                # Handle tables
+                if shape.has_table:
+                    table = shape.table
+                    for row in table.rows:
+                        row_text = " | ".join([cell.text for cell in row.cells])
+                        if row_text.strip():
+                            slide_texts.append(f"[Table] {row_text}")
+
+            # Add slide content
+            if slide_texts:
+                text_parts.extend(slide_texts)
+            else:
+                text_parts.append("[Empty slide]")
+
+            # Extract speaker notes
+            if slide.has_notes_slide:
+                notes_frame = slide.notes_slide.notes_text_frame
+                if notes_frame.text:
+                    text_parts.append("")
+                    text_parts.append(f"[Speaker Notes]")
+                    text_parts.append(notes_frame.text)
+                    total_notes += 1
+
+            text_parts.append("")  # Blank line between slides
+
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted PowerPoint: {filename} "
+            f"({len(prs.slides)} slides, {total_shapes} text shapes, {total_notes} notes)"
+        )
+
+        return result
+
+    except Exception as e:
+        raise Exception(f"PowerPoint extraction failed: {e}")
+
+
+# ============================================================================
+# PHASE 3: ARCHIVES & E-BOOKS
+# ============================================================================
+
+def extract_zip_archive(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract and process ZIP archive contents.
+
+    Recursively processes all supported file types within the archive.
+    Skips directories and files larger than 10MB to prevent resource exhaustion.
+
+    Supported files within ZIP:
+    - All file types supported by ingest_upload_file()
+    - Including code files, Jupyter notebooks, Office docs, PDFs, etc.
+
+    Args:
+        content_bytes: Raw bytes of ZIP file
+        filename: Original filename for metadata
+
+    Returns:
+        Formatted text with metadata and extracted content from all files
+
+    Example Output:
+        ZIP ARCHIVE: code_project.zip
+        Files: 15 total, 12 processed, 3 skipped
+        Total size: 2.4 MB
+
+        === src/main.py ===
+        [Python code content]
+
+        === docs/README.md ===
+        [Markdown content]
+    """
+    import zipfile
+    import io
+
+    try:
+        zip_file = zipfile.ZipFile(io.BytesIO(content_bytes))
+
+        # Gather file statistics
+        total_files = 0
+        total_size = 0
+        processed_files = 0
+        skipped_files = 0
+
+        text_parts = []
+        text_parts.append(f"ZIP ARCHIVE: {filename}")
+        text_parts.append("=" * 60)
+        text_parts.append("")
+
+        # First pass: collect statistics
+        file_list = []
+        for file_info in zip_file.infolist():
+            if not file_info.is_dir():
+                total_files += 1
+                total_size += file_info.file_size
+                file_list.append(file_info)
+
+        text_parts.append(f"Total files: {total_files}")
+        text_parts.append(f"Total size: {total_size / (1024*1024):.2f} MB")
+        text_parts.append("")
+        text_parts.append("CONTENTS:")
+        text_parts.append("-" * 60)
+        text_parts.append("")
+
+        # Second pass: process each file
+        for file_info in file_list:
+            # Skip large files (> 10MB per file)
+            if file_info.file_size > 10 * 1024 * 1024:
+                text_parts.append(f"⚠️  SKIPPED (too large): {file_info.filename}")
+                text_parts.append(f"   Size: {file_info.file_size / (1024*1024):.2f} MB")
+                text_parts.append("")
+                skipped_files += 1
+                continue
+
+            # Skip hidden files and system files
+            if file_info.filename.startswith('.') or '__MACOSX' in file_info.filename:
+                skipped_files += 1
+                continue
+
+            try:
+                file_content = zip_file.read(file_info.filename)
+
+                # Recursively process supported file types
+                extracted_text = ingest_upload_file(file_info.filename, file_content)
+
+                text_parts.append(f"=== {file_info.filename} ===")
+                text_parts.append(extracted_text)
+                text_parts.append("")
+                text_parts.append("-" * 60)
+                text_parts.append("")
+
+                processed_files += 1
+
+            except Exception as e:
+                text_parts.append(f"⚠️  FAILED: {file_info.filename}")
+                text_parts.append(f"   Error: {str(e)}")
+                text_parts.append("")
+                skipped_files += 1
+
+        # Summary at the end
+        text_parts.append("")
+        text_parts.append("SUMMARY:")
+        text_parts.append(f"Processed: {processed_files} files")
+        text_parts.append(f"Skipped: {skipped_files} files")
+        if total_files > 0:
+            text_parts.append(f"Success rate: {(processed_files/total_files*100):.1f}%")
+        else:
+            text_parts.append(f"Success rate: N/A (empty archive)")
+
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted ZIP archive: {filename} "
+            f"({total_files} files, {processed_files} processed, {skipped_files} skipped)"
+        )
+
+        return result
+
+    except zipfile.BadZipFile:
+        raise Exception(f"Invalid ZIP file: {filename}")
+    except Exception as e:
+        raise Exception(f"ZIP extraction failed: {e}")
+
+
+def extract_epub_text(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from EPUB book.
+
+    EPUB is a popular e-book format used for digital books, technical documentation,
+    and educational materials. This function extracts:
+    - Book metadata (title, author, language)
+    - All chapter content
+    - Table of contents structure
+
+    Args:
+        content_bytes: Raw bytes of EPUB file
+        filename: Original filename for metadata
+
+    Returns:
+        Formatted text with metadata and all chapter content
+
+    Example Output:
+        EPUB BOOK: Python Programming Guide
+        Author: John Doe
+        Language: en
+
+        === Chapter 1: Introduction ===
+        [Chapter content]
+
+        === Chapter 2: Getting Started ===
+        [Chapter content]
+    """
+    import ebooklib
+    from ebooklib import epub
+    from bs4 import BeautifulSoup
+    import io
+
+    try:
+        book = epub.read_epub(io.BytesIO(content_bytes))
+        text_parts = []
+
+        # Extract metadata
+        title = filename  # Default to filename
+        author = "Unknown"
+        language = "unknown"
+
+        try:
+            if book.get_metadata('DC', 'title'):
+                title = book.get_metadata('DC', 'title')[0][0]
+        except:
+            pass
+
+        try:
+            if book.get_metadata('DC', 'creator'):
+                author = book.get_metadata('DC', 'creator')[0][0]
+        except:
+            pass
+
+        try:
+            if book.get_metadata('DC', 'language'):
+                language = book.get_metadata('DC', 'language')[0][0]
+        except:
+            pass
+
+        text_parts.append(f"EPUB BOOK: {title}")
+        text_parts.append("=" * 60)
+        text_parts.append(f"Author: {author}")
+        text_parts.append(f"Language: {language}")
+        text_parts.append(f"Filename: {filename}")
+        text_parts.append("")
+        text_parts.append("CONTENT:")
+        text_parts.append("-" * 60)
+        text_parts.append("")
+
+        # Extract chapters
+        chapter_count = 0
+        for item in book.get_items():
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                try:
+                    soup = BeautifulSoup(item.get_content(), 'html.parser')
+
+                    # Remove script and style elements
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+
+                    text = soup.get_text(separator='\n', strip=True)
+
+                    if text and len(text.strip()) > 10:  # Skip very short sections (reduced threshold)
+                        chapter_count += 1
+
+                        # Try to extract chapter title
+                        chapter_title = f"Chapter {chapter_count}"
+                        h1 = soup.find('h1')
+                        if h1:
+                            chapter_title = h1.get_text(strip=True)
+
+                        text_parts.append(f"=== {chapter_title} ===")
+                        text_parts.append("")
+                        text_parts.append(text)
+                        text_parts.append("")
+                        text_parts.append("-" * 60)
+                        text_parts.append("")
+
+                except Exception as e:
+                    logger.warning(f"Failed to extract EPUB chapter: {e}")
+                    continue
+
+        text_parts.append("")
+        text_parts.append(f"Total chapters extracted: {chapter_count}")
+
+        result = "\n".join(text_parts)
+
+        logger.info(
+            f"Extracted EPUB: {title} by {author} "
+            f"({chapter_count} chapters)"
+        )
+
+        return result
+
+    except Exception as e:
+        raise Exception(f"EPUB extraction failed: {e}")
+
+
+def extract_subtitles(content_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from subtitle files (SRT, VTT).
+
+    Subtitle files are commonly used for:
+    - Video transcripts
+    - Language learning materials
+    - Accessibility content
+    - Lecture transcriptions
+
+    Supported formats:
+    - SRT (SubRip): Most common format, includes timestamps
+    - VTT (WebVTT): Web-based subtitle format
+
+    Args:
+        content_bytes: Raw bytes of subtitle file
+        filename: Original filename for metadata
+
+    Returns:
+        Formatted text with all subtitle content (timestamps removed)
+
+    Example Output:
+        SUBTITLE FILE: lecture_01.srt
+        Format: SRT
+        Entries: 145
+
+        Hello and welcome to today's lecture.
+        In this session we'll cover...
+    """
+    from pathlib import Path
+
+    ext = Path(filename).suffix.lower()
+    text_parts = []
+
+    try:
+        if ext == '.srt':
+            # SRT format (manual parsing - simple format, no library needed)
+            text = content_bytes.decode('utf-8')
+            lines = text.split('\n')
+
+            text_parts.append(f"SUBTITLE FILE: {filename}")
+            text_parts.append("=" * 60)
+            text_parts.append(f"Format: SRT (SubRip)")
+
+            # Parse SRT manually
+            subtitle_texts = []
+            current_subtitle = []
+            in_subtitle_text = False
+
+            for line in lines:
+                line_stripped = line.strip()
+
+                # Skip empty lines
+                if not line_stripped:
+                    if current_subtitle:
+                        subtitle_texts.append('\n'.join(current_subtitle))
+                        current_subtitle = []
+                    in_subtitle_text = False
+                    continue
+
+                # Skip subtitle numbers (lines that are just digits)
+                if line_stripped.isdigit():
+                    continue
+
+                # Skip timestamp lines (contain -->)
+                if '-->' in line_stripped:
+                    in_subtitle_text = True
+                    continue
+
+                # This is subtitle text
+                if in_subtitle_text or current_subtitle:
+                    current_subtitle.append(line_stripped)
+
+            # Don't forget last subtitle
+            if current_subtitle:
+                subtitle_texts.append('\n'.join(current_subtitle))
+
+            text_parts.append(f"Entries: {len(subtitle_texts)}")
+            text_parts.append("")
+            text_parts.append("TRANSCRIPT:")
+            text_parts.append("-" * 60)
+            text_parts.append("")
+
+            # Add all subtitle text
+            text_parts.extend(subtitle_texts)
+
+            logger.info(f"Extracted SRT subtitles: {filename} ({len(subtitle_texts)} entries)")
+
+        elif ext == '.vtt':
+            # WebVTT format (simple parsing)
+            text = content_bytes.decode('utf-8')
+            lines = text.split('\n')
+
+            text_parts.append(f"SUBTITLE FILE: {filename}")
+            text_parts.append("=" * 60)
+            text_parts.append(f"Format: WebVTT")
+            text_parts.append("")
+            text_parts.append("TRANSCRIPT:")
+            text_parts.append("-" * 60)
+            text_parts.append("")
+
+            # Filter out WebVTT header, timestamps, and metadata
+            subtitle_lines = []
+            for line in lines:
+                line = line.strip()
+                # Skip empty lines, WebVTT header, timestamps, and cue settings
+                if (line and
+                    not line.startswith('WEBVTT') and
+                    '-->' not in line and
+                    not line.startswith('NOTE') and
+                    not line.isdigit()):  # Skip cue numbers
+                    subtitle_lines.append(line)
+
+            text_parts.extend(subtitle_lines)
+
+            logger.info(f"Extracted VTT subtitles: {filename} ({len(subtitle_lines)} lines)")
+
+        else:
+            raise Exception(f"Unsupported subtitle format: {ext}")
+
+        result = "\n".join(text_parts)
+        return result
+
+    except Exception as e:
+        raise Exception(f"Subtitle extraction failed: {e}")
